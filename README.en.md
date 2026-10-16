@@ -4,6 +4,8 @@ A [BepInEx 5](https://github.com/BepInEx/BepInEx) plugin that gives you god mode
 
 [中文](README.md) · **English**
 
+**⬇️ [Download the latest release](https://github.com/xianyun66666/Casualties-Unknown-GodMode/releases/latest)** (plugin + illustrated install guide + usage manual + source) · [Install steps](#installation)
+
 ---
 
 > ### ⚠️ Please read first
@@ -45,6 +47,10 @@ A full description is in [docs/USAGE.en.md](docs/USAGE.en.md).
 ---
 
 ## Installation
+
+**Download**
+
+Grab a prebuilt package from [**Releases → latest**](https://github.com/xianyun66666/Casualties-Unknown-GodMode/releases/latest) — it contains `GodMode.dll`, a step-by-step install guide, the full usage manual, and the source. To build it yourself see [Building from source](#building-from-source).
 
 **Requirements**
 

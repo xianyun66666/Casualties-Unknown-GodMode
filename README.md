@@ -4,6 +4,8 @@
 
 **中文** · [English](README.en.md)
 
+**⬇️ [下载最新版](https://github.com/xianyun66666/Casualties-Unknown-GodMode/releases/latest)**（压缩包：插件 + 图文安装说明 + 使用手册 + 源码） · [安装步骤](#安装)
+
 ---
 
 > ### ⚠️ 请先读这一段
@@ -45,6 +47,10 @@
 ---
 
 ## 安装
+
+**下载**
+
+不想自己编译，就下打包好的：[**Releases → 最新版**](https://github.com/xianyun66666/Casualties-Unknown-GodMode/releases/latest) —— 压缩包里有 `GodMode.dll`、图文安装说明、完整使用手册和源码。想自己编译见[从源码编译](#从源码编译)。
 
 **需要**
 
