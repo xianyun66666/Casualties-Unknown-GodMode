@@ -19,22 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
---------------------------------------------------------------------------
-
-## 中文说明（方便阅读，法律效力以上面英文原文为准）
-
-上面是 **MIT 许可证**，用大白话说就是：
-
-- **你可以随便用** —— 拿去用、改、再发布、甚至卖钱，都行。
-- **只有一个要求** —— 保留上面那段版权声明和许可证原文（也就是别人拿到你的版本时，也能看到这段）。
-- **作者不负责** —— 软件是「按现状」给的，出了问题（存档坏了、游戏崩了、电脑炸了）作者不承担责任。
-
-## 关于游戏版权
-
-本项目是《Casualties: Unknown》的**非官方模组**。
-
-- 本仓库**不包含任何游戏代码、素材、文本或数据**。
-- 游戏本体及其全部内容，版权归其各自所有者（Orsoniks）所有。
-- 编译时引用的 `Assembly-CSharp.dll`、`Unity.TextMeshPro.dll`、`netstandard.dll`、
-  BepInEx 等文件**均不随本仓库分发**，需要使用者自己拥有这款游戏。

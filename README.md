@@ -230,4 +230,5 @@ pwsh -File .\build.ps1 -OutPath .\dist\GodMode.dll
 
 ## 许可
 
-[MIT](LICENSE) —— 代码随便用。游戏本身不在此许可范围内，也不在这里分发。
+[MIT](LICENSE) —— 代码随便用，保留版权声明即可，作者不负责。
+（想看大白话版：[许可证中文说明](LICENSE-中文说明.md)。游戏本身不在此许可范围内，也不在这里分发。）
