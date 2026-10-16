@@ -1,0 +1,86 @@
+name: 问题反馈
+description: 出错了、某个功能没反应，或者游戏崩溃 / 卡死
+title: "[问题] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢反馈！**这里几乎每个问题都能从日志里看出来**，所以请务必把日志那一栏填好 ——
+        不然我基本无从下手。
+
+        ⚠️ 动手之前先确认一件事：如果**把模组删掉之后**仍然会崩，那就是游戏自己的 bug，
+        不是模组的 bug。那种情况请去报给游戏作者。
+
+  - type: input
+    id: mod-version
+    attributes:
+      label: GodMode 版本
+      description: 在 `LogOutput.log` 里搜 `GodMode 已加载 vX.Y.Z`，或者看插件窗口的标题。
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: game-build
+    attributes:
+      label: 游戏构建号
+      description: |
+        Steam → 右键游戏 → 属性 → 已安装文件，或者看 `steamapps/appmanifest_4576510.acf`
+        里的 `buildid` 那一行。这游戏更新很勤，所以这个很重要。
+      placeholder: "24774057"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 你做了什么、你期望什么、实际发生了什么。
+      placeholder: |
+        1. 按 F8，切到「植物」，点了「天花板垂麦」
+        2. 期望它出现在标记点上
+        3. 结果游戏卡死了
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: LogOutput.log
+      description: |
+        请附上 **`<游戏根目录>\BepInEx\LogOutput.log`** —— 直接把文件拖进来，或者把里面的
+        `[GodMode]` 行贴上来。如果游戏崩了，再附上
+        `%USERPROFILE%\AppData\LocalLow\Orsoniks\CasualtiesUnknown\Player.log`。
+
+        先在日志里搜一下 `GodMode` —— 如果**一行 `[GodMode]` 都没有**，说明插件根本没加载，
+        那问题是安装没装对。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: 每次都这样吗？
+      options:
+        - "是的，每次必现"
+        - "有时候会"
+        - "只出现过一次"
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: 配置文件（只在你自己改过的时候填）
+      description: "`<游戏根目录>\\BepInEx\\config\\casualtiesunknown.godmode.cfg`"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### 如果是分类分错了
+        请附上 `<游戏根目录>\BepInEx\config\GodMode.生成物清单.log`（一行一条：
+        `分类 | prefab 名 | 组件`），并说明哪一行不对。
