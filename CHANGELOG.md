@@ -6,6 +6,48 @@
 
 ---
 
+## [1.1.0] —— 2026-10-17 —— 一击必杀 + 窗口内改键
+
+### 新功能
+
+| 按键 | 作用 |
+|---|---|
+| `F9` | **一击必杀** —— 打一下秒掉任何东西：生物 / 怪物 / 植物 / 建筑 / 方块 |
+
+- **一击必杀怎么做的**：只挂了一个 Harmony 前缀，挂在 `Body.Attack(AttackInfo atk, int slot)` 上。
+  这个方法是玩家**一切攻击的唯一收口**（`PlayerCamera.HandleAttacks` → `Body.UseItemInHand` → `Body.Attack`），
+  它内部按命中物分三条路走：
+  - 打中方块 → `WorldGeneration.DamageBlock(..., atk.structuralDamage, ...)`
+  - 打中建筑 → `BuildingEntity.health -= atk.structuralDamage`
+  - 打中生物 → `BuildingEntity.health -= atk.damage`
+
+  所以前缀里只把 `atk.damage` / `atk.structuralDamage` 乘一个倍率（默认 `100000`），
+  **一个钩子同时覆盖方块 / 建筑 / 生物**，不用分三处改。`atk` 是每次攻击临时 new 出来的对象，不污染存档。
+- **只对玩家生效**：前缀里判 `__instance == PlayerCamera.main.body`。NPC 互殴、野兽咬野兽仍是原版数值。
+- **前缀返回 `void`** 而不是 `false` —— 返回 `false` 会跳过原方法，那就变成「打不出去」了。
+- **倍率上限一百万**：伤害飘字走 `(int)` 转换，调到千万级会溢出成负数。
+  倍率可用配置项 `[Options] OneHitMultiplier` 调。
+
+### 新功能：窗口内改键
+
+生成窗口第一排新增 **「键位设置」** 按钮，第二排新增 **「重置键位」**。
+
+- 9 个功能（上帝 / 飞行 / 技能 / 治疗 / 传送 / 全亮 / 装备 / 生成器 / 一击必杀）都能改：
+  左键点一行 → 那一行变成 `◀ 请按下新的按键…` → 按一下新键 → 立刻生效并写回 cfg。
+- **冲突可见、可改**：绑了重复键不会拦你，但那一行会**变红**并在末尾写 `⚠ 与「XXX」冲突`，顶部也会提示。
+- **改键时功能热键被屏蔽**，否则把「上帝模式」改成 `F1` 的那一瞬间就会顺手开关一次。
+- **键位页复用了生成列表那 16 行控件**，没有新建 UI 对象 —— 少一份可能出错的渲染代码。
+- **不碰游戏自带的键位系统**：游戏里确实有 `Settings` / `KeyBinds` / `SettingKeybind`（`PlayerCamera.HandleAttacks()`
+  用 `KeyBinds.GetBind("attack")` 读攻击键），但那是游戏自己的存档数据，动它等于改存档；
+  插件用自己的 `BepInEx\config\casualtiesunknown.godmode.cfg` 存，互不干扰。
+
+### 其他
+
+- 左上角状态字里显示的键名改成动态读取 —— 你把 `F1` 改成 `G`，它就显示 `[G 关]`。
+- 每次按 `F8` 打开窗口都回到生成列表，不会卡在键位页。
+
+---
+
 ## [1.0.0] —— 2026-10-16 —— 首个公开发布版
 
 这是第一个公开发布版。下面写的全部内容都在内部编号 `0.1.0` – `0.9.0` 的私下构建里做完并测过了，

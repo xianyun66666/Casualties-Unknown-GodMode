@@ -1,6 +1,6 @@
 # GodMode — a cheat / sandbox mod for *Casualties: Unknown*
 
-A [BepInEx 5](https://github.com/BepInEx/BepInEx) plugin that gives you god mode, flight, max skills, a full-status-cleanse heal, teleport, fullbright — and a big searchable **spawn-anything** window (items, creatures, monsters, plants, structures, terrain blocks), with the spawn point chosen by you.
+A [BepInEx 5](https://github.com/BepInEx/BepInEx) plugin that gives you god mode, flight, max skills, a full-status-cleanse heal, teleport, fullbright, **one-hit kill** — and a big searchable **spawn-anything** window (items, creatures, monsters, plants, structures, terrain blocks), with the spawn point chosen by you and **keys you can rebind right inside the window**.
 
 [中文](README.md) · **English**
 
@@ -28,8 +28,42 @@ A [BepInEx 5](https://github.com/BepInEx/BepInEx) plugin that gives you god mode
 | `F6` | **Fullbright** | Full map lighting. |
 | `F7` | **Starter kit** | Grants the starting loadout. |
 | `F8` | **Spawn anything** | Opens the spawn window — see below. |
+| `F9` | **One-hit kill** | One swing destroys anything: creatures, monsters, plants, structures, blocks. |
 
-Every key is rebindable, and every feature can be toggled off in the config file.
+Every key is rebindable — **click "Key bindings" in the window** (see below) or edit the config file. Every feature can be toggled off.
+
+### One-hit kill (`F9`)
+
+Press `F9`, then swing at anything once:
+
+| What you hit | Result |
+|---|---|
+| Creature / monster / spider / trader | Dies in one hit |
+| Plant (ceiling rye, cactus, glowshroom…) | Shatters in one hit |
+| Structure / fixture (door, workbench, recharging station…) | Shatters in one hit |
+| Block (rock, ore, gravel…) | Shatters in one hit |
+
+Melee, firearms, bare hands — anything that deals damage through the attack key.
+
+Implementation is a single Harmony prefix on `Body.Attack(AttackInfo atk, int slot)`. That method is the one
+funnel for every attack the player makes (`PlayerCamera.HandleAttacks` → `Body.UseItemInHand` → `Body.Attack`),
+and it dispatches by target: blocks go to `WorldGeneration.DamageBlock(atk.structuralDamage)`, structures to
+`BuildingEntity.health -= atk.structuralDamage`, creatures to `BuildingEntity.health -= atk.damage`. So the
+prefix just multiplies both damage fields by a factor (default `100000`) — **one hook covers blocks, structures
+and creatures**.
+
+- **Player only:** NPC-on-NPC fights keep vanilla damage, so the world doesn't fall apart on its own.
+- The factor is configurable, **but don't go past one million**: damage numbers go through an `(int)` cast and overflow into negatives.
+
+### Key bindings
+
+The spawn window has a **"Key bindings"** button on the first row and a **"Reset keys"** button on the second.
+
+- Left-click a row → it turns into `◀ press a new key…` → press a key → applied instantly and written back to the cfg.
+- All 9 actions are rebindable: god mode / flight / max skills / cleanse / teleport / fullbright / starter kit / spawner / one-hit kill.
+- **Conflicts are allowed but flagged loudly:** the row turns red and shows `⚠ conflicts with "XXX"`. Both actions will fire on that key (that's just how Unity input works) — click the row again to pick another key.
+- **Hotkeys are temporarily suppressed while rebinding**, otherwise rebinding god mode to `F1` would toggle it on that very press.
+- The mod does **not** touch the game's own key system (`Settings` / `KeyBinds` / `SettingKeybind`); it stores keys in its own cfg and leaves your saves alone.
 
 ### The spawn window (`F8`)
 

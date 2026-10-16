@@ -15,11 +15,15 @@ world bounds can only be read once a world exists.
 │   [Plants] Ceiling Rye                         (ceilingrye)               │
 │   ...                                                              (16 rows)
 ├───────────────────────────────────────────────────────────────────────────┤
-│ [Everything][Items][Creatures][Plants][Structures][Blocks]  [Search] ...  │
-│ [◀][  Sub-category  ][▶][= all]                             [PgUp][PgDn]  │
+│ [Everything][Items][Creatures][Plants][Structures][Blocks] [Search][Clear][Keys][Close]
+│ [◀][  Sub-category  ][▶][= all]                     [Reset keys][PgUp][PgDn]  │
 │ [Position: pick a point][Pick][-10%][+10%][Auto-pick][All][R5][R20][Stop] │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
+
+> The **"Keys"** button on the first row replaces this list with the 9 action bindings — see
+> [the "Key bindings" section of the README](../README.en.md#key-bindings). This document covers
+> the spawn window; the key page merely borrows the same area.
 
 ## Categories
 
@@ -78,8 +82,8 @@ shown in "pick a point" mode.
 |---|---|
 | Left-click a row | spawn that entry |
 | Mouse wheel | page up/down |
-| Row 1 buttons | group / search / clear filter / close |
-| Row 2 buttons | sub-category ◀ ▶ / all / previous page / next page |
+| Row 1 buttons | group / search / clear filter / **keys** / close |
+| Row 2 buttons | sub-category ◀ ▶ / all / **reset keys** / previous page / next page |
 | Row 3 buttons | position / pick / condition ∓10% / auto-pickup / spawn all / random ×5 / random ×20 / stop |
 | `↑` `↓` | move the selected row ※ in pick mode the arrows nudge the spawn point instead — press `Esc` first |
 | `Enter` | spawn the selected row |
@@ -88,6 +92,38 @@ shown in "pick a point" mode.
 | `/` | enter/leave the search box (type to filter, `Backspace` to delete) |
 | `Esc` | leave search; press again to close the window |
 | `F8` | toggle the window |
+
+## The key bindings page
+
+Click **"Keys"** on the first row and the same window becomes the key page (a "Reset keys" button
+appears on row 2):
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ Key bindings - click a row, then press the key you want (9 actions)        │
+│ Left-click a row → press a new key → applied instantly, written to the cfg │
+│ Conflicts are not blocked, but the row turns red and says "conflicts with…"│
+├───────────────────────────────────────────────────────────────────────────┤
+│ ▸ God mode          →   [F1]         (default F1)                          │
+│   Flight / noclip   →   [F2]         (default F2)                          │
+│   ...                                                             (9 rows) │
+│   One-hit kill      →   [F9]         (default F9)                          │
+└───────────────────────────────────────────────────────────────────────────┘
+(The "⚠ conflicts with …" marker only appears once you actually bind two actions to the same key.)
+```
+
+| Input | Effect |
+|---|---|
+| Left-click a row | select it and wait for a key (the row shows `◀ press a new key…`) |
+| Press any key | binds immediately, writes back to `BepInEx\config\casualtiesunknown.godmode.cfg`, status line updates |
+| `Esc` while waiting | cancel this rebind |
+| `Esc` (not waiting) | back to the spawn list |
+| "Keys" button | toggle between the key page and the spawn list |
+| "Reset keys" button | restore all 9 defaults (F1–F9) |
+| Opening the window with `F8` | always starts on the spawn list, never stuck on the key page |
+
+**Hotkeys are suppressed while rebinding** — otherwise rebinding god mode to `F1` would toggle it on
+that very press. Only three buttons work on the key page: `Close` / `Keys` / `Reset keys`.
 
 ## Where the data comes from
 

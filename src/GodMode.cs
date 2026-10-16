@@ -1,13 +1,25 @@
 // ============================================================================
-//  Casualties Unknown (Demo) - 上帝模式 God Mode   v1.0.0
+//  Casualties Unknown (Demo) - 上帝模式 God Mode   v1.1.0
 //  运行环境: BepInEx 5.4.23.4 / Unity 2022.3.62 / Mono
 //  编译约束: 用 .NET Framework 自带 csc.exe => 只能 C# 5 语法
 //            (禁用 ?. / 字符串插值 / 表达式体成员 / nameof)
 //  逆向依据: Body/Limb 构造函数中的满值常量, ConsoleScript 的 noclip 实现
 //
-//  版本说明: v1.0.0 = 首个公开发布版, 内容等于下面的内部迭代 0.9.0.
+//  版本说明: v1.1.0 = 一击必杀(F9) + 窗口内可改键位.
+//            v1.0.0 = 首个公开发布版, 内容等于下面的内部迭代 0.9.0.
 //            下文 v0.7.0 / v0.8.0 / v0.9.0 是发布前的内部迭代记录, 保留供追溯.
 //            发布前那些更早的迭代(0.1.0~0.6.0)以新增功能为主, 已并入本节说明.
+//
+//  v1.1.0 变更:
+//    * 一击必杀(F9): 挂 Body.Attack 前缀. 这个方法是玩家一切攻击的唯一收口 ——
+//      命中方块走 WorldGeneration.DamageBlock(structuralDamage), 命中建筑走
+//      BuildingEntity.health -= structuralDamage, 命中生物走
+//      BuildingEntity.health -= damage. 前缀里把 atk.damage 与 atk.structuralDamage
+//      乘以倍率(默认十万), 于是近战/远程都是一下秒. 只对玩家生效, NPC 互殴不受影响.
+//      倍率别调过百万: 伤害飘字走 (int) 转换, 太大就溢出成负数了.
+//    * 键位设置: 生成器窗口里新增「键位设置」页, 9 个功能(上帝/飞行/技能/治疗/传送/
+//      全亮/装备/生成器/一击必杀)都能改键. 点一行 -> 按新键 -> 立刻写进 cfg 并生效;
+//      两个功能撞同一个键会标红提醒但不拦着; 「重置键位」一键恢复 F1~F9.
 //
 //  v0.7.0 变更 (界面版):
 //    * 【重要】本游戏里 IMGUI 完全不可用: 插件自身以及自己 AddComponent 出来的
@@ -64,11 +76,12 @@ using UnityEngine.UI;
 
 namespace CasualtiesGodMode
 {
-    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.0.0")]
+    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.1.0")]
     public class GodModePlugin : BaseUnityPlugin
     {
         internal static ManualLogSource L;
         internal static Harmony H;
+        internal static ConfigFile CfgFile;      // 静态方法里没法用 BaseUnityPlugin.Config，存一份
 
         internal static ConfigEntry<string> CGod;
         internal static ConfigEntry<string> CFly;
@@ -78,11 +91,13 @@ namespace CasualtiesGodMode
         internal static ConfigEntry<string> CLight;
         internal static ConfigEntry<string> CKit;
         internal static ConfigEntry<string> CSpawner;
+        internal static ConfigEntry<string> COneHit;
         internal static ConfigEntry<bool> CStartGod;
         internal static ConfigEntry<bool> CStartFly;
         internal static ConfigEntry<bool> CHud;
         internal static ConfigEntry<bool> CDebug;
         internal static ConfigEntry<bool> CMoodClear;
+        internal static ConfigEntry<float> COneHitMul;
 
         internal static KeyCode KGod = KeyCode.F1;
         internal static KeyCode KFly = KeyCode.F2;
@@ -92,10 +107,12 @@ namespace CasualtiesGodMode
         internal static KeyCode KLight = KeyCode.F6;
         internal static KeyCode KKit = KeyCode.F7;
         internal static KeyCode KSpawner = KeyCode.F8;
+        internal static KeyCode KOneHit = KeyCode.F9;
 
         internal static bool GodOn = false;
         internal static bool FlyOn = false;
         internal static bool LightOn = false;
+        internal static bool OneHitOn = false;
 
         internal static string Msg = "";
         internal static float MsgUntil = 0f;
@@ -196,6 +213,7 @@ namespace CasualtiesGodMode
         void Awake()
         {
             L = Logger;
+            CfgFile = Config;
 
             CGod = Config.Bind<string>("Keys", "GodMode", "F1", "上帝模式 开/关");
             CFly = Config.Bind<string>("Keys", "FlyNoClip", "F2", "上天入地(飞行+穿墙) 开/关");
@@ -205,6 +223,7 @@ namespace CasualtiesGodMode
             CLight = Config.Bind<string>("Keys", "Fullbright", "F6", "全亮 开/关");
             CKit = Config.Bind<string>("Keys", "StarterKit", "F7", "领取初始装备包");
             CSpawner = Config.Bind<string>("Keys", "ItemSpawner", "F8", "生成万物窗口 开/关");
+            COneHit = Config.Bind<string>("Keys", "OneHitKill", "F9", "一击必杀（打一下就秒掉目标）开/关");
             CStartGod = Config.Bind<bool>("Options", "StartWithGodMode", false, "启动时自动开启上帝模式");
             CStartFly = Config.Bind<bool>("Options", "StartWithFly", false, "启动时自动开启飞行");
             CHud = Config.Bind<bool>("Options", "ShowHud", true, "左上角显示状态提示");
@@ -222,15 +241,20 @@ namespace CasualtiesGodMode
             CSpawnMaxBatch = Config.Bind<int>("Options", "SpawnMaxBatch", 800, "一次批量生成的数量上限");
             CSpawnDump = Config.Bind<bool>("Options", "DumpInventory", true, "打开生成器时把「所有可生成的东西 + 它被分到哪一类 + 身上有哪些组件」写一份清单到 BepInEx\\config\\GodMode.生成物清单.log，方便核对分类");
             CPauseOpen = Config.Bind<bool>("Options", "PauseWhileOpen", true, "打开生成器时把游戏时间冻住（Time.timeScale=0），避免点界面时角色也跟着挥拳/用道具");
+            COneHitMul = Config.Bind<float>("Options", "OneHitMultiplier", 100000f, "一击必杀的伤害倍率（默认十万倍，100 血的方块和 300 血的怪都是一下没）");
 
-            KGod = ParseKey(CGod.Value, KeyCode.F1);
-            KFly = ParseKey(CFly.Value, KeyCode.F2);
-            KSkill = ParseKey(CSkill.Value, KeyCode.F3);
-            KHeal = ParseKey(CHeal.Value, KeyCode.F4);
-            KTp = ParseKey(CTp.Value, KeyCode.F5);
-            KLight = ParseKey(CLight.Value, KeyCode.F6);
-            KKit = ParseKey(CKit.Value, KeyCode.F7);
-            KSpawner = ParseKey(CSpawner.Value, KeyCode.F8);
+            // ---- 可改键位表：顺序 = 界面上从上到下 ----
+            KeyBinds.Clear();
+            AddBind("上帝模式", "GodMode", CGod, KeyCode.F1, KID_GOD);
+            AddBind("上天入地", "FlyNoClip", CFly, KeyCode.F2, KID_FLY);
+            AddBind("技能拉满", "MaxSkills", CSkill, KeyCode.F3, KID_SKILL);
+            AddBind("清除负面状态", "FullHeal", CHeal, KeyCode.F4, KID_HEAL);
+            AddBind("传送到鼠标", "TeleportToMouse", CTp, KeyCode.F5, KID_TP);
+            AddBind("全亮", "Fullbright", CLight, KeyCode.F6, KID_LIGHT);
+            AddBind("初始装备包", "StarterKit", CKit, KeyCode.F7, KID_KIT);
+            AddBind("生成万物窗口", "ItemSpawner", CSpawner, KeyCode.F8, KID_SPAWNER);
+            AddBind("一击必杀", "OneHitKill", COneHit, KeyCode.F9, KID_ONEHIT);
+            SyncKeysFromBinds();
 
             GodOn = CStartGod.Value;
             FlyOn = CStartFly.Value;
@@ -240,10 +264,10 @@ namespace CasualtiesGodMode
             StartWatchdog();
             StartHud();
 
-            L.LogInfo("[GodMode] 已加载 v1.0.0");
+            L.LogInfo("[GodMode] 已加载 v1.1.0");
             L.LogInfo("[GodMode] 按键: 上帝=" + KGod + " 飞行=" + KFly + " 技能=" + KSkill
                 + " 治疗=" + KHeal + " 传送=" + KTp + " 全亮=" + KLight + " 装备=" + KKit
-                + " 生成器=" + KSpawner);
+                + " 生成器=" + KSpawner + " 一击必杀=" + KOneHit);
         }
 
         // 第三路驱动：插件自身的 Update
@@ -292,6 +316,21 @@ namespace CasualtiesGodMode
             try
             {
                 ScanKeys();
+
+                // 正在改键时不要再触发功能热键：否则你把「上帝模式」改成 F1 的那一瞬间
+                // 就顺手开关了一次。身体/队列/界面这些每帧维护照常跑。
+                if (SpawnerOn && UiKeyMode)
+                {
+                    Body pbk = PlayerBody();
+                    if (GodOn && pbk != null) RestoreBody(pbk);
+                    SyncNoClip();
+                    ClampFlight();
+                    RepairTraders();
+                    ProcessSpawnQueue();
+                    UiRefresh();
+                    Heartbeat();
+                    return;
+                }
 
                 if (Input.GetKeyDown(KGod))
                 {
@@ -366,6 +405,8 @@ namespace CasualtiesGodMode
                         BuildSpawnList(true);
                         UiShownDirty = true;
                         BuildUi();
+                        UiKeyMode = false;      // 每次打开都从生成列表开始，不留在键位页
+                        UiKeySel = -1;
                         // 第一次打开时把生成点默认设在角色脚下，这样「自己选的点」模式不会指到 (0,0)
                         if (!SpawnAnchorSet) SetAnchorFromPlayer();
                         UiSetVisible(true);
@@ -377,6 +418,14 @@ namespace CasualtiesGodMode
                         UiSetVisible(false);
                         Notify("生成器：关闭");
                     }
+                }
+
+                if (Input.GetKeyDown(KOneHit))
+                {
+                    OneHitOn = !OneHitOn;
+                    Notify(OneHitOn
+                        ? ("一击必杀：开启（打一下就秒，倍率 " + Mathf.RoundToInt(OneHitMul()) + "x）")
+                        : "一击必杀：关闭");
                 }
 
                 Body p = PlayerBody();
@@ -487,6 +536,8 @@ namespace CasualtiesGodMode
         internal const int A_G_BLOCK = 25;   // 方块
         internal const int A_CAT_ALL = 26;   // 子分类=全部
         internal const int A_PICKPOS = 27;   // 选位置（在世界上点一下定生成点）
+        internal const int A_KEYBINDS = 28;  // 切到 / 退出「键位设置」页
+        internal const int A_KBRESET = 29;   // 全部键位恢复默认
 
         // 顶层分组名，顺序必须和 A_G_ALL..A_G_BLOCK 一致
         internal static readonly string[] GroupNames = { "全部", "物品", "生物", "植物", "建筑", "方块" };
@@ -505,6 +556,33 @@ namespace CasualtiesGodMode
             public TextMeshProUGUI Tx;
             public int Act;
         }
+
+        // ---- 可改键位：每一条 = 一个功能 + 一个配置项 + 当前键 ----
+        internal class KeyBind
+        {
+            public string Label;                 // 界面上的中文功能名
+            public string CfgKey;                // 配置文件里的键名
+            public ConfigEntry<string> Cfg;
+            public KeyCode Def;                  // 出厂默认
+            public KeyCode Cur;                  // 当前生效
+            public int Id;                       // 见 KID_* 常量
+        }
+
+        internal const int KID_GOD = 0;
+        internal const int KID_FLY = 1;
+        internal const int KID_SKILL = 2;
+        internal const int KID_HEAL = 3;
+        internal const int KID_TP = 4;
+        internal const int KID_LIGHT = 5;
+        internal const int KID_KIT = 6;
+        internal const int KID_SPAWNER = 7;
+        internal const int KID_ONEHIT = 8;
+
+        internal static readonly List<KeyBind> KeyBinds = new List<KeyBind>();
+        internal static bool UiKeyMode = false;               // 生成器窗口是否切到「键位设置」页
+        internal static int UiKeySel = -1;                    // 正在等待按键的那一条（点一下行，再按新键）
+        internal static string UiKeyMsg = "";
+        internal static float UiKeyMsgUntil = 0f;
 
         internal static GameObject UiRoot;
         internal static Canvas UiCanvas;
@@ -675,6 +753,7 @@ namespace CasualtiesGodMode
                 AddBtn(310f, 88f, 56f, A_G_BLOCK);
                 AddBtn(372f, 88f, 96f, A_SEARCH);
                 AddBtn(472f, 88f, 110f, A_CLEARF);
+                AddBtn(590f, 88f, 110f, A_KEYBINDS);    // 「键位设置」/「返回生成器」
                 AddBtn(706f, 88f, 78f, A_CLOSE);
 
                 // 第二排：子分类 + 翻页
@@ -682,6 +761,7 @@ namespace CasualtiesGodMode
                 AddBtn(78f, 116f, 300f, 0);            // act=0 纯标签，显示当前子分类
                 AddBtn(382f, 116f, 64f, A_CAT_NEXT);
                 AddBtn(450f, 116f, 110f, A_CAT_ALL);
+                AddBtn(562f, 116f, 58f, A_KBRESET);     // 「重置」键位
                 AddBtn(624f, 116f, 78f, A_PGUP);
                 AddBtn(706f, 116f, 78f, A_PGDN);
 
@@ -904,16 +984,78 @@ namespace CasualtiesGodMode
             if (act == A_R5) { SpawnRandom(5); return; }
             if (act == A_R20) { SpawnRandom(20); return; }
             if (act == A_STOP) { SpawnQueue.Clear(); Notify("已停止生成队列"); return; }
-            if (act == A_CLOSE) { SpawnerOn = false; return; }
+            if (act == A_CLOSE) { SpawnerOn = false; UiKeyMode = false; UiKeySel = -1; UiPickPos = false; return; }
             if (act == A_CLEARF) { SpawnFilter = ""; UiShownDirty = true; return; }
             if (act == A_PGUP) { UiPage--; UiClampPage(); return; }
             if (act == A_PGDN) { UiPage++; UiClampPage(); return; }
             if (act == A_SEARCH) { UiSearchMode = !UiSearchMode; return; }
+            if (act == A_KEYBINDS)
+            {
+                UiKeyMode = !UiKeyMode;
+                UiKeySel = -1;
+                UiPickPos = false;
+                UiSearchMode = false;
+                UiSel = 0;
+                UiHover = -1;
+                UiKeyMsg = UiKeyMode ? "点一行功能，然后按下你想用的键；Esc 取消" : "";
+                UiKeyMsgUntil = Time.unscaledTime + 8f;
+                Notify(UiKeyMode ? "键位设置：点一行，然后按新键（Esc 取消）" : "已返回生成器");
+                return;
+            }
+            if (act == A_KBRESET) { ResetKeyBinds(); return; }
+        }
+
+        // ---- 键位设置页的鼠标/键盘处理 ----
+        internal static void UiInputKeys(Vector2 mp)
+        {
+            UiHover = -1;
+            for (int i = 0; i < KeyBinds.Count && i < UiRowList.Count; i++)
+            {
+                if (RectTransformUtility.RectangleContainsScreenPoint(UiRowList[i].Rt, mp, null)) { UiHover = i; break; }
+            }
+
+            if (Input.GetMouseButtonDown(0))
+            {
+                if (UiHover >= 0)
+                {
+                    UiSel = UiHover;
+                    UiKeySel = UiHover;
+                    UiKeyMsg = "请按下新的按键…（Esc 取消）";
+                    UiKeyMsgUntil = Time.unscaledTime + 8f;
+                    return;
+                }
+                for (int i = 0; i < UiBtnList.Count; i++)
+                {
+                    if (RectTransformUtility.RectangleContainsScreenPoint(UiBtnList[i].Rt, mp, null))
+                    {
+                        int act = UiBtnList[i].Act;
+                        // 键位页里只让「关闭 / 返回生成器 / 重置」三个按钮生效，其余按钮忽略
+                        if (act == A_CLOSE || act == A_KEYBINDS || act == A_KBRESET) DoAction(act);
+                        return;
+                    }
+                }
+            }
+
+            // 正在等按键：抓任意键（Esc 取消）
+            if (UiKeySel >= 0)
+            {
+                if (Input.GetKeyDown(KeyCode.Escape)) { UiKeySel = -1; Notify("已取消改键"); return; }
+                for (int k = 1; k <= 320; k++)
+                {
+                    if (k == 27) continue;                       // 27 = Escape，留给「取消」
+                    if (Input.GetKeyDown((KeyCode)k)) { ApplyKeyBind(UiKeySel, (KeyCode)k); UiKeySel = -1; return; }
+                }
+                return;
+            }
+
+            if (Input.GetKeyDown(KeyCode.Escape)) { UiKeyMode = false; Notify("已返回生成器"); return; }
         }
 
         internal static void UiInput()
         {
             Vector2 mp = Input.mousePosition;
+
+            if (UiKeyMode) { UiInputKeys(mp); return; }
 
             // ---- 选位置模式：鼠标扫过世界 = 移动锚点，点一下 = 定下来 ----
             if (UiPickPos)
@@ -1019,11 +1161,12 @@ namespace CasualtiesGodMode
 
             try
             {
-                // 常驻状态字
+                // 常驻状态字（键名跟着键位设置走）
                 string st = "";
-                if (GodOn) st = st + "★ 上帝模式 ON   [F1 关]    ";
-                if (FlyOn) st = st + "★ 上天入地 ON   [F2 关]    ";
-                if (SpawnerOn) st = st + "★ 生成器   [F8 关]";
+                if (GodOn) st = st + "★ 上帝模式 ON   [" + KeyName(KGod) + " 关]    ";
+                if (FlyOn) st = st + "★ 上天入地 ON   [" + KeyName(KFly) + " 关]    ";
+                if (OneHitOn) st = st + "★ 一击必杀 ON   [" + KeyName(KOneHit) + " 关]    ";
+                if (SpawnerOn) st = st + "★ 生成器   [" + KeyName(KSpawner) + " 关]";
                 if (UiStatus != null) UiStatus.text = st;
 
                 // 窗口的显示/隐藏由这里统一处理：无论按键、按钮还是 Esc 关的，都能正确收起
@@ -1043,6 +1186,28 @@ namespace CasualtiesGodMode
                 if (!SpawnerOn) return;
 
                 UiInput();
+
+                // ---- 键位设置页 ----
+                if (UiKeyMode)
+                {
+                    if (Time.unscaledTime < UiNextRefresh) return;
+                    UiNextRefresh = Time.unscaledTime + 0.1f;
+
+                    if (UiTitle != null)
+                        UiTitle.text = "键位设置 - 点一行功能，然后按下你想用的键（共 " + KeyBinds.Count + " 项）";
+
+                    if (UiInfo != null)
+                        UiInfo.text = "想换哪个键就点哪一行，然后按一下新键。两个功能撞了同一个键会标红提醒，但照样能用。\n"
+                            + "选中的那一行按 Esc = 取消本次改键；改完立刻写进配置文件，下次启动还是这个键。";
+
+                    if (UiHint != null)
+                        UiHint.text = ((Time.unscaledTime < UiKeyMsgUntil && UiKeyMsg.Length > 0) ? ("▶ " + UiKeyMsg + "\n") : "")
+                            + "左键点一行 = 改这个键    「重置」= 全部恢复 F1~F9    「返回生成器」/Esc = 回列表";
+
+                    DrawKeyRows();
+                    RefreshBtnLabels(0f, false);
+                    return;
+                }
 
                 if (UiShownDirty || UiShownStamp != SpawnIds.Count) { UiRebuildShown(); UiShownDirty = false; }
 
@@ -1131,6 +1296,8 @@ namespace CasualtiesGodMode
                 else if (b.Act == A_PGUP) s = "上一页";
                 else if (b.Act == A_PGDN) s = "下一页";
                 else if (b.Act == A_CLOSE) s = "关闭";
+                else if (b.Act == A_KEYBINDS) s = UiKeyMode ? "返回生成器" : "键位设置";
+                else if (b.Act == A_KBRESET) s = "重置键位";
                 if (b.Tx.text != s) b.Tx.text = s;
 
                 if (b.Act >= A_G_ALL && b.Act <= A_G_BLOCK && GroupNames[b.Act - A_G_ALL] == SpawnGroup)
@@ -1139,6 +1306,8 @@ namespace CasualtiesGodMode
                 else if (b.Act == A_PICKPOS && ((CSpawnPosMode != null ? CSpawnPosMode.Value : 2) == 2))
                     b.Bg.color = new Color(0.30f, 0.46f, 0.30f, 0.98f);
                 else if (b.Act == A_SEARCH && UiSearchMode) b.Bg.color = new Color(0.55f, 0.42f, 0.15f, 0.98f);
+                else if (b.Act == A_KEYBINDS && UiKeyMode) b.Bg.color = new Color(0.55f, 0.42f, 0.15f, 0.98f);
+                else if (b.Act == A_KBRESET && UiKeyMode) b.Bg.color = new Color(0.46f, 0.30f, 0.30f, 0.98f);
                 else if (b.Act == A_STOP && SpawnQueue.Count > 0) b.Bg.color = new Color(0.55f, 0.20f, 0.20f, 0.98f);
                 else b.Bg.color = new Color(0.22f, 0.27f, 0.38f, 0.98f);
             }
@@ -1385,6 +1554,143 @@ namespace CasualtiesGodMode
             if (s.Length == 0) return def;
             try { return (KeyCode)Enum.Parse(typeof(KeyCode), s, true); }
             catch { return def; }
+        }
+
+        // ==================================================================
+        //  可改键位（v1.1.0）
+        //  设计：不依赖游戏自带的 Settings/KeyBinds（那是它自己的存档系统），
+        //  直接把每个功能的键写进 BepInEx 的 cfg 文件，哪个键冲突了在窗口里点一下就能改。
+        // ==================================================================
+
+        internal static void AddBind(string label, string cfgKey, ConfigEntry<string> cfg, KeyCode def, int id)
+        {
+            KeyBind b = new KeyBind();
+            b.Label = label;
+            b.CfgKey = cfgKey;
+            b.Cfg = cfg;
+            b.Def = def;
+            b.Id = id;
+            b.Cur = ParseKey(cfg != null ? cfg.Value : null, def);
+            KeyBinds.Add(b);
+        }
+
+        // 把表里的当前键写回 8+1 个静态字段（Tick 里读的就是这些字段）
+        internal static void SyncKeysFromBinds()
+        {
+            for (int i = 0; i < KeyBinds.Count; i++)
+            {
+                KeyBind b = KeyBinds[i];
+                if (b.Id == KID_GOD) KGod = b.Cur;
+                else if (b.Id == KID_FLY) KFly = b.Cur;
+                else if (b.Id == KID_SKILL) KSkill = b.Cur;
+                else if (b.Id == KID_HEAL) KHeal = b.Cur;
+                else if (b.Id == KID_TP) KTp = b.Cur;
+                else if (b.Id == KID_LIGHT) KLight = b.Cur;
+                else if (b.Id == KID_KIT) KKit = b.Cur;
+                else if (b.Id == KID_SPAWNER) KSpawner = b.Cur;
+                else if (b.Id == KID_ONEHIT) KOneHit = b.Cur;
+            }
+        }
+
+        internal static string KeyName(KeyCode k)
+        {
+            return k.ToString();
+        }
+
+        // 这个键和别的功能撞了没有？撞了返回「⚠ 与「XXX」冲突」，没撞返回空串
+        internal static string ConflictText(KeyCode kc, int exceptIndex)
+        {
+            if (kc == KeyCode.None) return "";
+            for (int i = 0; i < KeyBinds.Count; i++)
+            {
+                if (i == exceptIndex) continue;
+                if (KeyBinds[i].Cur == kc) return "   ⚠ 与「" + KeyBinds[i].Label + "」冲突";
+            }
+            return "";
+        }
+
+        internal static int FirstConflict(KeyCode kc, int exceptIndex)
+        {
+            if (kc == KeyCode.None) return -1;
+            for (int i = 0; i < KeyBinds.Count; i++)
+            {
+                if (i == exceptIndex) continue;
+                if (KeyBinds[i].Cur == kc) return i;
+            }
+            return -1;
+        }
+
+        internal static void ApplyKeyBind(int i, KeyCode kc)
+        {
+            if (i < 0 || i >= KeyBinds.Count) return;
+            KeyBind b = KeyBinds[i];
+            KeyCode old = b.Cur;
+            b.Cur = kc;
+            try { if (b.Cfg != null) b.Cfg.Value = kc.ToString(); }
+            catch (Exception e) { if (L != null) L.LogWarning("[GodMode][键位] 写入配置失败: " + e.Message); }
+            try { if (CfgFile != null) CfgFile.Save(); }
+            catch (Exception e) { if (L != null) L.LogWarning("[GodMode][键位] 保存配置失败: " + e.Message); }
+            SyncKeysFromBinds();
+
+            string warn = ConflictText(kc, i);
+            UiKeyMsg = "「" + b.Label + "」 " + KeyName(old) + " → " + KeyName(kc) + (warn.Length > 0 ? warn : "   ✔ 已保存");
+            UiKeyMsgUntil = Time.unscaledTime + 6f;
+            if (L != null) L.LogInfo("[GodMode][键位] " + b.Label + " (" + b.CfgKey + ") = " + kc + (warn.Length > 0 ? warn : ""));
+        }
+
+        internal static void ResetKeyBinds()
+        {
+            for (int i = 0; i < KeyBinds.Count; i++)
+            {
+                KeyBind b = KeyBinds[i];
+                b.Cur = b.Def;
+                try { if (b.Cfg != null) b.Cfg.Value = b.Def.ToString(); }
+                catch { }
+            }
+            try { if (CfgFile != null) CfgFile.Save(); }
+            catch { }
+            SyncKeysFromBinds();
+            UiKeyMsg = "全部键位已恢复默认（F1~F9）";
+            UiKeyMsgUntil = Time.unscaledTime + 6f;
+            if (L != null) L.LogInfo("[GodMode][键位] 已恢复默认");
+        }
+
+        // 键位页的 9 行内容（复用生成器的 16 行控件，只画前 9 行）
+        internal static void DrawKeyRows()
+        {
+            for (int i = 0; i < UiRowList.Count; i++)
+            {
+                UiRow u = UiRowList[i];
+                if (i >= KeyBinds.Count)
+                {
+                    u.Tx.text = "";
+                    u.Bg.color = new Color(1f, 1f, 1f, 0f);
+                    continue;
+                }
+                KeyBind b = KeyBinds[i];
+                string mark = (i == UiKeySel) ? "> " : ((i == UiSel) ? "· " : "  ");
+                string head = (i == UiKeySel) ? "  ◀ 请按下新的按键…（Esc 取消）" : "";
+                string warn = ConflictText(b.Cur, i);
+                string def = (b.Def != b.Cur) ? ("   默认: " + KeyName(b.Def)) : "";
+                u.Tx.text = mark + b.Label + "   →   [" + KeyName(b.Cur) + "]" + head + warn + def;
+
+                if (i == UiKeySel) u.Bg.color = new Color(0.62f, 0.42f, 0.12f, 0.95f);
+                else if (warn.Length > 0) u.Bg.color = new Color(0.55f, 0.20f, 0.20f, 0.80f);
+                else if (i == UiHover) u.Bg.color = new Color(0.28f, 0.40f, 0.62f, 0.85f);
+                else if ((i % 2) == 1) u.Bg.color = new Color(1f, 1f, 1f, 0.045f);
+                else u.Bg.color = new Color(1f, 1f, 1f, 0f);
+
+                u.Tx.color = (i == UiKeySel) ? Color.white
+                    : (warn.Length > 0 ? new Color(1f, 0.82f, 0.82f, 1f) : new Color(0.90f, 0.93f, 1f, 1f));
+            }
+        }
+
+        internal static float OneHitMul()
+        {
+            float k = (COneHitMul != null) ? COneHitMul.Value : 100000f;
+            if (k < 1f) k = 1f;
+            if (k > 1000000f) k = 1000000f;   // 再大伤害数字会溢出成负数
+            return k;
         }
 
         // ==================================================================
@@ -2269,6 +2575,7 @@ namespace CasualtiesGodMode
             MethodInfo postBound = typeof(Patches).GetMethod("Post_UpdateExpBoundaries");
             MethodInfo preLevel = typeof(Patches).GetMethod("Pre_CheckForLevelUp");
             MethodInfo preAdd = typeof(Patches).GetMethod("Pre_AddExp");
+            MethodInfo preAttack = typeof(Patches).GetMethod("Pre_Attack");
 
             Hook("Body.HandleBody(每帧身体模拟)", typeof(Body), "HandleBody", preBody, postBody);
             Hook("Body.HandleCirculation(血液循环/脑死亡)", typeof(Body), "HandleCirculation", preCirc, null);
@@ -2290,6 +2597,11 @@ namespace CasualtiesGodMode
             Hook("Skills.UpdateExpBoundaries(上限修正)", typeof(Skills), "UpdateExpBoundaries", null, postBound);
             Hook("Skills.CheckForLevelUp(等级钳制)", typeof(Skills), "CheckForLevelUp", preLevel, null);
             Hook("Skills.AddExp(经验值钳制)", typeof(Skills), "AddExp", preAdd, null);
+
+            // 一击必杀（F9）：Body.Attack 是玩家一切攻击的唯一收口。
+            // 它内部把 atk.damage / atk.structuralDamage 分别喂给生物血量与建筑/方块血量，
+            // 所以只在前缀里把这两个数放大，就能做到「打一下，万物皆碎」。
+            Hook("Body.Attack(一击必杀)", typeof(Body), "Attack", preAttack, null);
         }
 
         static void Hook(string label, Type t, string name, MethodInfo pre, MethodInfo post)
@@ -2461,6 +2773,34 @@ namespace CasualtiesGodMode
             if (!GodModePlugin.GodOn) return;
             if (!GodModePlugin.IsPlayer(__instance)) return;
             __result = true;
+        }
+
+        // ---- 一击必杀（F9）----
+        // Body.Attack(AttackInfo atk, int slot) 是玩家所有攻击的唯一收口：
+        //   · 命中方块 -> WorldGeneration.DamageBlock(..., atk.structuralDamage ...)
+        //   · 命中建筑 -> BuildingEntity.health -= atk.structuralDamage
+        //   · 命中生物 -> BuildingEntity.health -= atk.damage，并 SendMessage("AnimalHit", atk.damage)
+        // 所以只要在这里把两个伤害数放大，近战/远程都能一下秒。
+        // 返回 void = 原方法照常执行（不能 return false，那样就变成「打不出去」了）。
+        public static void Pre_Attack(Body __instance, AttackInfo atk)
+        {
+            try
+            {
+                if (!GodModePlugin.OneHitOn) return;
+                if (atk == null || __instance == null) return;
+                if (!GodModePlugin.IsPlayer(__instance)) return;   // 只管玩家，NPC 互殴维持原样
+                float k = GodModePlugin.OneHitMul();
+                atk.damage *= k;
+                atk.structuralDamage *= k;
+            }
+            catch (Exception e)
+            {
+                if (GodModePlugin.L != null && Time.unscaledTime > GodModePlugin.NextErrLog)
+                {
+                    GodModePlugin.NextErrLog = Time.unscaledTime + 5f;
+                    GodModePlugin.L.LogWarning("[GodMode][一击必杀] 放大伤害失败: " + e.Message);
+                }
+            }
         }
     }
 

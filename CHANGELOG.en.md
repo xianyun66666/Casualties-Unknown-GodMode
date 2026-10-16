@@ -4,6 +4,53 @@ All notable changes to this mod. This project follows [Semantic Versioning](http
 
 ---
 
+## [1.1.0] — 2026-10-17 — one-hit kill + rebindable keys
+
+### New feature
+
+| Key | What it does |
+|---|---|
+| `F9` | **One-hit kill** — one swing destroys anything: creatures, monsters, plants, structures, blocks |
+
+- **How it works:** a single Harmony prefix on `Body.Attack(AttackInfo atk, int slot)`. That method is the
+  single funnel for every attack the player makes
+  (`PlayerCamera.HandleAttacks` → `Body.UseItemInHand` → `Body.Attack`), and it dispatches by what you hit:
+  - block hit → `WorldGeneration.DamageBlock(..., atk.structuralDamage, ...)`
+  - structure hit → `BuildingEntity.health -= atk.structuralDamage`
+  - creature hit → `BuildingEntity.health -= atk.damage`
+
+  So the prefix just multiplies `atk.damage` and `atk.structuralDamage` by a factor (default `100000`).
+  **One hook covers blocks, structures and creatures at once.** `atk` is a throwaway object created per
+  attack, so nothing leaks into your save.
+- **Player only:** the prefix checks `__instance == PlayerCamera.main.body`. NPC-on-NPC fights keep vanilla damage.
+- **The prefix returns `void`, not `false`** — returning `false` would skip the original method, i.e. you could
+  no longer swing at all.
+- **Factor is capped at one million:** damage numbers go through an `(int)` cast, and tens of millions overflow
+  into negative values. Tune it with `[Options] OneHitMultiplier`.
+
+### New feature: rebind keys inside the window
+
+The spawn window gains a **"Key bindings"** button on the first row and a **"Reset keys"** button on the second.
+
+- All 9 actions (god mode / flight / skills / cleanse / teleport / fullbright / starter kit / spawner / one-hit kill)
+  are rebindable: left-click a row → it turns into `◀ press a new key…` → press a key → applied instantly and
+  written back to the cfg.
+- **Conflicts are visible and fixable:** binding a duplicate is allowed, but that row turns **red** and shows
+  `⚠ conflicts with "XXX"`, plus a message at the top.
+- **Hotkeys are suppressed while rebinding** — otherwise rebinding god mode to `F1` would toggle it on that very press.
+- **The key page reuses the same 16 row widgets** as the spawn list, so no extra UI objects were created.
+- **The game's own key system is left alone.** The game does ship `Settings` / `KeyBinds` / `SettingKeybind`
+  (`PlayerCamera.HandleAttacks()` reads the attack key via `KeyBinds.GetBind("attack")`), but that is the game's
+  own save data — touching it means touching saves. The mod stores its keys in
+  `BepInEx\config\casualtiesunknown.godmode.cfg` instead.
+
+### Other
+
+- Key names shown in the top-left status line are now read dynamically: rebind `F1` to `G` and it shows `[G off]`.
+- Pressing `F8` always reopens the spawn list instead of staying on the key page.
+
+---
+
 ## [1.0.0] — 2026-10-16 — first public release
 
 This is the first public release. Everything described below was built and tested in
