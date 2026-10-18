@@ -2,6 +2,11 @@
 
 All notable changes to this mod. This project follows [Semantic Versioning](https://semver.org/).
 
+> **Release note**: this mod has exactly one public release, **v1.2.0**. The 1.2.1 / 1.2.2 / 1.2.3
+> entries below were interim test builds used locally and never published on their own; every fix in
+> them is **already included in the v1.2.0 package**. They are kept here to document how each bug was
+> tracked down.
+
 ---
 
 ## [1.2.3] — 2026-10-18 — the character really stops walking on its own now

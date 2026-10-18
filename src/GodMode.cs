@@ -109,7 +109,7 @@ using UnityEngine.UI;
 
 namespace CasualtiesGodMode
 {
-    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.3")]
+    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.0")]
     public class GodModePlugin : BaseUnityPlugin
     {
         internal static ManualLogSource L;
@@ -301,7 +301,7 @@ namespace CasualtiesGodMode
             StartWatchdog();
             StartHud();
 
-            L.LogInfo("[GodMode] 已加载 v1.2.3");
+            L.LogInfo("[GodMode] 已加载 v1.2.0");
             L.LogInfo("[GodMode] 按键: 上帝=" + KGod + " 飞行=" + KFly + " 技能=" + KSkill
                 + " 治疗=" + KHeal + " 传送=" + KTp + " 全亮=" + KLight + " 装备=" + KKit
                 + " 生成器=" + KSpawner + " 一击必杀=" + KOneHit);

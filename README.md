@@ -114,10 +114,10 @@ WINEDLLOVERRIDES="winhttp=n,b" %command%
 打开 `<游戏根目录>\BepInEx\LogOutput.log`，搜 `GodMode`。正常应该是：
 
 ```
-[Info   :BepInEx] Loading [GodMode 1.2.3]
+[Info   :BepInEx] Loading [GodMode 1.2.0]
 [Info   :GodMode] [GodMode] 已挂钩: PlayerCamera.Update(每帧驱动)
 ...  （一共 17 行 已挂钩）
-[Info   :GodMode] [GodMode] 已加载 v1.2.3
+[Info   :GodMode] [GodMode] 已加载 v1.2.0
 [Info   :GodMode] [GodMode] 看门狗已启动
 [Info   :GodMode] [GodMode][生成器] 已载入：物品 284 + 实体 … + 方块 … = … 种
 [Info   :GodMode] [GodMode][界面] uGUI 窗口已创建，字体 = ...
