@@ -15,8 +15,27 @@ world bounds can only be read once a world exists.
 │   [Plants] Ceiling Rye                         (ceilingrye)               │
 │   ...                                                              (16 rows)
 ├───────────────────────────────────────────────────────────────────────────┤
-│ [Everything][Items][Creatures][Plants][Structures][Blocks] [Search][Clear][Keys][Close]
-│ [◀][  Sub-category  ][▶][= all]                     [Reset keys][PgUp][PgDn]  │
+│ [Everything][Items][Creatures][Plants][Structures][Blocks][Other] [Search][Clear][Keys][Close]
+│ [◀][  ▼ Everything (click to pick a category)  ][▶][= all]  [Reset][PgUp][PgDn]  │
+│ [Position: pick a point][Pick][-10%][+10%][Auto-pick][All][R5][R20][Stop] │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+Picking a group (say **Items**) switches the title to **"Category overview"** and turns the list
+into category cells:
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ Spawner — category overview — pick a group (Items)                        │
+│ Every sub-category under "Items". Click one to show only that category.   │
+├───────────────────────────────────────────────────────────────────────────┤
+│ ▶ Items/Weapons/Guns                            24      Items/Weapons/Guns│
+│   Items/Weapons/Melee                           31      Items/Weapons/Melee│
+│   Items/Ammo                                    11      Items/Ammo         │
+│   ...                                                              (16 rows)
+├───────────────────────────────────────────────────────────────────────────┤
+│ [Everything][Items][Creatures][Plants][Structures][Blocks][Other] [Search][Clear][Keys][Close]
+│ [◀][  ◀ Back to list: Everything  ][▶][= all]              [Reset][PgUp][PgDn]  │
 │ [Position: pick a point][Pick][-10%][+10%][Auto-pick][All][R5][R20][Stop] │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
@@ -25,6 +44,10 @@ world bounds can only be read once a world exists.
 > [the "Key bindings" section of the README](../README.en.md#key-bindings). This document covers
 > the spawn window; the key page merely borrows the same area.
 
+> **The character is frozen while the window is open.** Movement, aiming and attacks are all
+> skipped, so clicking the UI no longer drags you around. Set `FreezeInputWhileOpen = false` in
+> the config to walk with the menu up.
+
 ## Categories
 
 ### Groups (row 1)
@@ -32,16 +55,33 @@ world bounds can only be read once a world exists.
 | Group | Contains |
 |---|---|
 | **Everything** | everything, sorted by name |
-| **Items** | every pickable item, sub-categorised by the game's own item category |
-| **Creatures** | traders, animals, monsters (`Creatures/Trader`, `Creatures/Animal`, `Creatures/Monster`) |
-| **Plants** | trees, mushrooms, vines, moss, rye, reeds, roses, cacti … |
-| **Structures** | buildings and installations, plus `Structures/Crystal` (decorative mineral clusters) |
-| **Blocks** | terrain blocks — these are **placed into the world**, not dropped |
+| **Items** | every pickable item, split into ammo / wearables (armour · clothing) / weapons (guns · melee · other) / medical (dressings · medicine · drugs) / food / drinks / containers / junk / tools / materials |
+| **Creatures** | monsters, traders, animals, NPCs (`Creatures/Monster`, `Creatures/Trader`, `Creatures/Animal`, `Creatures/NPC`) |
+| **Plants** | mushrooms, trees, vines, groundcover, crops, flowers (rye, sand roses and cacti land in `Plants/Crops` or `Plants/Flowers`) |
+| **Structures** | doors & walls, workbenches, power, storage, medical, defence, furniture, crystal, installations |
+| **Blocks** | terrain blocks — these are **placed into the world**, not dropped; seven material classes |
+| **Other** | corpses, interactable objects, and genuine odds and ends |
+
+### Category overview (after picking a group)
+
+Picking any group switches the window to the **category overview**: one cell per concrete
+category, with a live count on the right.
+
+- Click a row → only that category is shown, and the window returns to the normal list.
+- In the normal list the row-2 label reads `▼ Items/Medical (click to pick a category)` —
+  **click it to go straight back to the overview**.
+- `Backspace` also toggles between the list and the overview.
 
 ### Sub-categories (row 2)
 
-`◀` / `▶` cycle through the sub-categories **of the current group**; the middle button
-shows the current one. `= all` resets to no sub-category filter. `Tab` also cycles.
+`◀` / `▶` cycle through the categories **of the current group**; the middle button
+shows the current one. `= all` resets to no category filter. `Tab` also cycles.
+
+### Search
+
+Press `/` and type. **As soon as a keyword is entered, the group and category filters stop
+applying** — the whole list is searched, so you can find a monster while the Items group is
+selected. Clearing the search box brings the category filter back.
 
 ## Spawn position
 
@@ -80,16 +120,17 @@ shown in "pick a point" mode.
 
 | Input | Effect |
 |---|---|
-| Left-click a row | spawn that entry |
+| Left-click a row | spawn that entry (in the category overview: **enter that category**) |
 | Mouse wheel | page up/down |
-| Row 1 buttons | group / search / clear filter / **keys** / close |
-| Row 2 buttons | sub-category ◀ ▶ / all / **reset keys** / previous page / next page |
+| Row 1 buttons | groups (Everything/Items/Creatures/Plants/Structures/Blocks/Other) / search / clear filter / **keys** / close |
+| Row 2 buttons | category ◀ ▶ / **category label (click to return to the overview)** / all / **reset keys** / previous page / next page |
 | Row 3 buttons | position / pick / condition ∓10% / auto-pickup / spawn all / random ×5 / random ×20 / stop |
 | `↑` `↓` | move the selected row ※ in pick mode the arrows nudge the spawn point instead — press `Esc` first |
-| `Enter` | spawn the selected row |
+| `Enter` | spawn the selected row (in the overview: enter that category) |
 | `PageUp` `PageDown` `Home` `End` | paging |
-| `Tab` | next sub-category |
-| `/` | enter/leave the search box (type to filter, `Backspace` to delete) |
+| `Tab` | next category |
+| `Backspace` | toggle between the list and the category overview |
+| `/` | enter/leave the search box (type to filter, `Backspace` to delete; **search ignores group and category**) |
 | `Esc` | leave search; press again to close the window |
 | `F8` | toggle the window |
 
@@ -133,8 +174,8 @@ automatically:
 | Source | Yields |
 |---|---|
 | `Item.GlobalItems` | all items |
-| `Resources.LoadAll<GameObject>("")` filtered to prefabs carrying an `Item` or `BuildingEntity` component | creatures, plants, structures |
-| `WorldGeneration.GetBlockInfo(ushort)` probed from 0 upwards until it returns null | terrain blocks |
+| `Resources.LoadAll<GameObject>("")` filtered to prefabs carrying an `Item`, `BuildingEntity` or `UsableObject` component | creatures, plants, structures, furniture and interactable objects |
+| `WorldGeneration.GetBlockInfo(ushort)` probed from 0 upwards (stops after 512 consecutive gaps) | terrain blocks |
 
 Spawned with the game's own `Utils.Create(id, pos, rot)` — the exact same code path as the
 game's built-in `spawn` console command — falling back to instantiating the prefab the mod
@@ -153,15 +194,19 @@ after instantiation, which is why earlier versions showed blank names.
 
 ## Reporting a mis-categorised entry
 
-Categories are inferred from the components an object carries, so some entries will be
+Categories are inferred **component-first, with name keywords as a fallback** — corpses go
+through `CorpseScript`, crystal enemies through `CrystalEnemy`, decorative crystal through
+`CrystalBehaviour`, traders through `TraderScript`, the spider family through `SpiderHandler` /
+`SpiderHandlerTBE`; only what is left over is decided by name. Some entries will still be
 wrong. With `DumpInventory = true` (the default), opening the window writes:
 
 ```
 <game folder>\BepInEx\config\GodMode.spawnlist.log
 ```
 
-with one line per entry, `category | prefab | components`. Attach that file to an issue and
-the rules can be corrected.
+with one line per entry, `category | id | display name | extra` (for items the extra column is
+the game's own category, for entities it is the component list). Attach that file to an issue
+and the rules can be corrected.
 
 ## Log lines
 

@@ -1,14 +1,47 @@
 // ============================================================================
-//  Casualties Unknown (Demo) - 上帝模式 God Mode   v1.1.0
+//  Casualties Unknown (Demo) - 上帝模式 God Mode   v1.2.0
 //  运行环境: BepInEx 5.4.23.4 / Unity 2022.3.62 / Mono
 //  编译约束: 用 .NET Framework 自带 csc.exe => 只能 C# 5 语法
 //            (禁用 ?. / 字符串插值 / 表达式体成员 / nameof)
 //  逆向依据: Body/Limb 构造函数中的满值常量, ConsoleScript 的 noclip 实现
 //
-//  版本说明: v1.1.0 = 一击必杀(F9) + 窗口内可改键位.
+//  版本说明: v1.2.0 = 修断肢后无法开枪 + 药物后遗清干净 + 菜单细分 + 菜单时冻结操作.
+//            v1.1.0 = 一击必杀(F9) + 窗口内可改键位.
 //            v1.0.0 = 首个公开发布版, 内容等于下面的内部迭代 0.9.0.
 //            下文 v0.7.0 / v0.8.0 / v0.9.0 是发布前的内部迭代记录, 保留供追溯.
 //            发布前那些更早的迭代(0.1.0~0.6.0)以新增功能为主, 已并入本节说明.
+//
+//  v1.2.0 变更:
+//    * 【修】断肢之后就算「完全治疗」也用不了枪: 根因在 Limb.Dismember() —— 它砍肢体
+//      时除了置 dismembered=true, 还会 gameObject.SetActive(false). 以前的完全治疗
+//      只把 dismembered 改回 false、健康值拉满, 却没有把那个 GameObject 重新启用,
+//      于是手臂对象一直是停用状态, 瞄准/开枪自然全废. 现在治疗时一并 SetActive(true),
+//      连同 broken / dislocated / splinted / 断骨计时器一起清掉.
+//    * 【修】药物的负面效果清不掉: 出在 Painkillers 组件上. 兴奋剂过量(overdose1~4)、
+//      戒断(withdrawal1~4)、药物过量(drugoverdose)、刺激(stimulated)、咖啡因(energized)
+//      这几类图标全部来自 Painkillers.actualOpiateReception 与 Body 上的几个药物字段,
+//      而它们不在 Body 里, 以前根本没人清. 现在一并清零(Painkillers 五个量 + 
+//      onHardStimulants / caffeinated / stimulantMultiplier / overdoseIndex /
+//      focusedLevel + 神经增强剂残留 / 脱敏倍率 / 呕吐).
+//    * 【改】生成器菜单原先是一长条平铺列表, 找东西要滚很久. 现在:
+//        ① 第一排分组(全部/物品/生物/植物/建筑/方块/其它)只选大方向;
+//        ② 点完分组直接进「分类总览」, 每个格子是一个具体分类并标出件数,
+//           点哪格就只留那类东西; 第二排的分类标签可以随时点回总览;
+//        ③ 物品细分到 弹药/穿戴(护甲·服装)/武器(枪械·近战)/医疗(包扎·药品·药物)/
+//           食物/饮料/容器/垃圾/工具/材料, 不再是一个 custom 桶塞几十件;
+//        ④ 生物细分到 怪物/商人/动物/NPC; 植物细分到 蘑菇/树木/藤蔓/草丛/作物/花藻;
+//           建筑细分到 门墙/工作台/电力/存储/医疗/防御/家具/水晶; 方块按材质分七类.
+//       分类判据以组件类型为先(尸体/水晶怪/交易商/蜘蛛系各走各的), 名字关键词兜底.
+//    * 【修】打开菜单时角色跟着动: 以前只把 timeScale 冻住, 但玩家的输入是在
+//      PlayerCamera.HandleInput() 里读的, 跟时间缩放无关, 所以照样走、照样挥拳.
+//      现在给 HandleInput 挂了前缀, 窗口开着时直接跳过整个方法(移动/瞄准/攻击一起挡);
+//      同时每秒清一次 body.moveDir 兜底. 配置项 FreezeInputWhileOpen 可关.
+//    * 【修】菜单里搜不到东西: 两个原因 ——
+//        ① 搜索原来只在当前分组/分类里筛, 在「物品」里搜怪物名当然搜不到;
+//           现在一旦输入关键词就无视分组与分类, 全清单一起搜.
+//        ② 清单本身漏东西: 实体只认 Item / BuildingEntity 组件, 现在补上 UsableObject
+//           (家具、终端等一大堆可交互物件); 方块的探测容错从 256 放宽到 512,
+//           稀疏分布的方块不会再被截断.
 //
 //  v1.1.0 变更:
 //    * 一击必杀(F9): 挂 Body.Attack 前缀. 这个方法是玩家一切攻击的唯一收口 ——
@@ -76,7 +109,7 @@ using UnityEngine.UI;
 
 namespace CasualtiesGodMode
 {
-    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.1.0")]
+    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.0")]
     public class GodModePlugin : BaseUnityPlugin
     {
         internal static ManualLogSource L;
@@ -98,6 +131,9 @@ namespace CasualtiesGodMode
         internal static ConfigEntry<bool> CDebug;
         internal static ConfigEntry<bool> CMoodClear;
         internal static ConfigEntry<float> COneHitMul;
+
+        // v1.2.0：窗口打开时冻结玩家操作（移动/瞄准/挥拳/开枪）
+        internal static ConfigEntry<bool> CFreezeInput;
 
         internal static KeyCode KGod = KeyCode.F1;
         internal static KeyCode KFly = KeyCode.F2;
@@ -242,6 +278,7 @@ namespace CasualtiesGodMode
             CSpawnDump = Config.Bind<bool>("Options", "DumpInventory", true, "打开生成器时把「所有可生成的东西 + 它被分到哪一类 + 身上有哪些组件」写一份清单到 BepInEx\\config\\GodMode.生成物清单.log，方便核对分类");
             CPauseOpen = Config.Bind<bool>("Options", "PauseWhileOpen", true, "打开生成器时把游戏时间冻住（Time.timeScale=0），避免点界面时角色也跟着挥拳/用道具");
             COneHitMul = Config.Bind<float>("Options", "OneHitMultiplier", 100000f, "一击必杀的伤害倍率（默认十万倍，100 血的方块和 300 血的怪都是一下没）");
+            CFreezeInput = Config.Bind<bool>("Options", "FreezeInputWhileOpen", true, "打开生成器窗口时冻结角色操作（不响应 WASD/鼠标/攻击），避免点界面时角色乱走乱挥拳");
 
             // ---- 可改键位表：顺序 = 界面上从上到下 ----
             KeyBinds.Clear();
@@ -264,7 +301,7 @@ namespace CasualtiesGodMode
             StartWatchdog();
             StartHud();
 
-            L.LogInfo("[GodMode] 已加载 v1.1.0");
+            L.LogInfo("[GodMode] 已加载 v1.2.0");
             L.LogInfo("[GodMode] 按键: 上帝=" + KGod + " 飞行=" + KFly + " 技能=" + KSkill
                 + " 治疗=" + KHeal + " 传送=" + KTp + " 全亮=" + KLight + " 装备=" + KKit
                 + " 生成器=" + KSpawner + " 一击必杀=" + KOneHit);
@@ -316,6 +353,7 @@ namespace CasualtiesGodMode
             try
             {
                 ScanKeys();
+                FreezePlayerIfNeeded();
 
                 // 正在改键时不要再触发功能热键：否则你把「上帝模式」改成 F1 的那一瞬间
                 // 就顺手开关了一次。身体/队列/界面这些每帧维护照常跑。
@@ -407,6 +445,7 @@ namespace CasualtiesGodMode
                         BuildUi();
                         UiKeyMode = false;      // 每次打开都从生成列表开始，不留在键位页
                         UiKeySel = -1;
+                        UiCatMode = true;       // v1.2.0：先看「分类总览」，避免一开窗就是几百条
                         // 第一次打开时把生成点默认设在角色脚下，这样「自己选的点」模式不会指到 (0,0)
                         if (!SpawnAnchorSet) SetAnchorFromPlayer();
                         UiSetVisible(true);
@@ -538,9 +577,22 @@ namespace CasualtiesGodMode
         internal const int A_PICKPOS = 27;   // 选位置（在世界上点一下定生成点）
         internal const int A_KEYBINDS = 28;  // 切到 / 退出「键位设置」页
         internal const int A_KBRESET = 29;   // 全部键位恢复默认
+        internal const int A_BACKCAT = 30;   // 回到「分类总览」（点一下子分类标签就能进）
+        internal const int A_G_OTHER = 31;   // 顶层分组按钮：其它（尸体 / 可交互 / 杂项）
 
-        // 顶层分组名，顺序必须和 A_G_ALL..A_G_BLOCK 一致
-        internal static readonly string[] GroupNames = { "全部", "物品", "生物", "植物", "建筑", "方块" };
+        // 顶层分组名，顺序必须和 A_G_ALL..A_G_BLOCK + A_G_OTHER 一致
+        internal static readonly string[] GroupNames = { "全部", "物品", "生物", "植物", "建筑", "方块", "其它" };
+
+        internal static bool IsGroupAct(int a)
+        {
+            return (a >= A_G_ALL && a <= A_G_BLOCK) || a == A_G_OTHER;
+        }
+
+        internal static int GroupIdx(int a)
+        {
+            if (a == A_G_OTHER) return GroupNames.Length - 1;
+            return a - A_G_ALL;
+        }
 
         internal class UiRow
         {
@@ -583,6 +635,9 @@ namespace CasualtiesGodMode
         internal static int UiKeySel = -1;                    // 正在等待按键的那一条（点一下行，再按新键）
         internal static string UiKeyMsg = "";
         internal static float UiKeyMsgUntil = 0f;
+
+        internal static bool UiCatMode = false;               // 列表区是否显示「分类总览」（v1.2.0）
+        internal static readonly List<string> UiCatList = new List<string>();
 
         internal static GameObject UiRoot;
         internal static Canvas UiCanvas;
@@ -744,21 +799,22 @@ namespace CasualtiesGodMode
                 UiInfo.rectTransform.sizeDelta = new Vector2(UI_PANEL_W - 20f, 44f);
                 UiInfo.rectTransform.anchoredPosition = new Vector2(10f, -42f);
 
-                // 第一排：顶层分组
-                AddBtn(10f, 88f, 56f, A_G_ALL);
-                AddBtn(70f, 88f, 56f, A_G_ITEM);
-                AddBtn(130f, 88f, 56f, A_G_LIFE);
-                AddBtn(190f, 88f, 56f, A_G_PLANT);
-                AddBtn(250f, 88f, 56f, A_G_BUILD);
-                AddBtn(310f, 88f, 56f, A_G_BLOCK);
-                AddBtn(372f, 88f, 96f, A_SEARCH);
-                AddBtn(472f, 88f, 110f, A_CLEARF);
-                AddBtn(590f, 88f, 110f, A_KEYBINDS);    // 「键位设置」/「返回生成器」
-                AddBtn(706f, 88f, 78f, A_CLOSE);
+                // 第一排：顶层分组（v1.2.0 加了「其它」，收尸体/可交互/杂项）+ 工具按钮
+                AddBtn(10f, 88f, 52f, A_G_ALL);
+                AddBtn(66f, 88f, 52f, A_G_ITEM);
+                AddBtn(122f, 88f, 52f, A_G_LIFE);
+                AddBtn(178f, 88f, 52f, A_G_PLANT);
+                AddBtn(234f, 88f, 52f, A_G_BUILD);
+                AddBtn(290f, 88f, 52f, A_G_BLOCK);
+                AddBtn(346f, 88f, 52f, A_G_OTHER);
+                AddBtn(404f, 88f, 80f, A_SEARCH);
+                AddBtn(488f, 88f, 84f, A_CLEARF);
+                AddBtn(576f, 88f, 100f, A_KEYBINDS);    // 「键位设置」/「返回生成器」
+                AddBtn(680f, 88f, 72f, A_CLOSE);
 
                 // 第二排：子分类 + 翻页
                 AddBtn(10f, 116f, 64f, A_CAT_PREV);
-                AddBtn(78f, 116f, 300f, 0);            // act=0 纯标签，显示当前子分类
+                AddBtn(78f, 116f, 300f, A_BACKCAT);   // 点它 = 打开/关闭「分类总览」（v1.2.0）
                 AddBtn(382f, 116f, 64f, A_CAT_NEXT);
                 AddBtn(450f, 116f, 110f, A_CAT_ALL);
                 AddBtn(562f, 116f, 58f, A_KBRESET);     // 「重置」键位
@@ -869,10 +925,17 @@ namespace CasualtiesGodMode
             }
         }
 
+        // 列表区当前一共有多少条（分类总览模式下列的是分类，不是条目）
+        internal static int UiListCount()
+        {
+            return UiCatMode ? UiCatList.Count : UiShown.Count;
+        }
+
         internal static int UiPageCount()
         {
-            if (UiShown.Count <= 0) return 1;
-            return (UiShown.Count + UI_ROWS - 1) / UI_ROWS;
+            int n = UiListCount();
+            if (n <= 0) return 1;
+            return (n + UI_ROWS - 1) / UI_ROWS;
         }
 
         internal static void UiClampPage()
@@ -886,13 +949,41 @@ namespace CasualtiesGodMode
 
         internal static void UiRebuildShown()
         {
+            // 一搜索就退出「分类总览」，否则翻了半天还是分类格子，看不到搜索结果
+            if (SpawnFilter.Length > 0) UiCatMode = false;
             UiShown.Clear();
             for (int i = 0; i < SpawnIds.Count; i++)
             {
                 if (MatchFilter(i)) UiShown.Add(i);
             }
             UiShownStamp = SpawnIds.Count;
+            RebuildCatList();
             UiClampPage();
+        }
+
+        // 分类总览：当前大分组下的全部子分类（"全部" 永远第一，后面按名字排序）
+        internal static void RebuildCatList()
+        {
+            UiCatList.Clear();
+            List<string> src = CatListForGroup();
+            for (int i = 0; i < src.Count; i++) UiCatList.Add(src[i]);
+        }
+
+        // 某个分类下一共有多少条能生成的东西（分类总览里显示数量用）
+        internal static int CountOfCat(string cat)
+        {
+            int n = 0;
+            for (int i = 0; i < SpawnIds.Count; i++)
+            {
+                if (CatInGroup(SpawnCats[i], cat)) n++;
+            }
+            return n;
+        }
+
+        internal static bool CatInGroup(string c, string want)
+        {
+            if (want == "全部") return true;
+            return c == want || c.StartsWith(want + "/");
         }
 
         // 当前分组下有哪些子分类（"全部" 永远在第一个）
@@ -921,6 +1012,7 @@ namespace CasualtiesGodMode
             cur = (cur + d) % list.Count;
             if (cur < 0) cur += list.Count;
             SpawnCat = list[cur];
+            UiCatMode = false;
             UiPage = 0;
             UiSel = 0;
             UiShownDirty = true;
@@ -949,16 +1041,24 @@ namespace CasualtiesGodMode
 
         internal static void DoAction(int act)
         {
-            if (act >= A_G_ALL && act <= A_G_BLOCK)
+            if (IsGroupAct(act))
             {
-                SpawnGroup = GroupNames[act - A_G_ALL];
+                SpawnGroup = GroupNames[GroupIdx(act)];
                 SpawnCat = "全部";
                 UiPage = 0;
                 UiSel = 0;
+                UiCatMode = true;          // v1.2.0：点大分类先进「分类总览」，不再一上来就甩出几百条
                 UiShownDirty = true;
+                UiShownStamp = -1;
                 return;
             }
-            if (act == A_CAT_ALL) { SpawnCat = "全部"; UiPage = 0; UiSel = 0; UiShownDirty = true; return; }
+            if (act == A_BACKCAT)
+            {
+                if (!UiCatMode) { UiCatMode = true; UiPage = 0; UiSel = 0; RebuildCatList(); UiClampPage(); }
+                else { UiCatMode = false; UiPage = 0; UiSel = 0; UiShownDirty = true; }
+                return;
+            }
+            if (act == A_CAT_ALL) { SpawnCat = "全部"; UiCatMode = false; UiPage = 0; UiSel = 0; UiShownDirty = true; return; }
             if (act == A_CAT_PREV) { CycleCat(-1); return; }
             if (act == A_CAT_NEXT) { CycleCat(1); return; }
             if (act == A_POS)
@@ -980,11 +1080,11 @@ namespace CasualtiesGodMode
             if (act == A_COND_DN) { if (CSpawnCond != null) CSpawnCond.Value = Mathf.Clamp01(CSpawnCond.Value - 0.1f); return; }
             if (act == A_COND_UP) { if (CSpawnCond != null) CSpawnCond.Value = Mathf.Clamp01(CSpawnCond.Value + 0.1f); return; }
             if (act == A_PICKUP) { if (CSpawnPickup != null) CSpawnPickup.Value = !CSpawnPickup.Value; return; }
-            if (act == A_ALL) { SpawnAllFiltered(); Notify("正在生成筛选结果…"); return; }
-            if (act == A_R5) { SpawnRandom(5); return; }
-            if (act == A_R20) { SpawnRandom(20); return; }
+            if (act == A_ALL) { if (UiCatMode) { Notify("先点一个分类，再点「生成全部」"); return; } SpawnAllFiltered(); Notify("正在生成筛选结果…"); return; }
+            if (act == A_R5) { if (UiCatMode) { Notify("先点一个分类"); return; } SpawnRandom(5); return; }
+            if (act == A_R20) { if (UiCatMode) { Notify("先点一个分类"); return; } SpawnRandom(20); return; }
             if (act == A_STOP) { SpawnQueue.Clear(); Notify("已停止生成队列"); return; }
-            if (act == A_CLOSE) { SpawnerOn = false; UiKeyMode = false; UiKeySel = -1; UiPickPos = false; return; }
+            if (act == A_CLOSE) { SpawnerOn = false; UiKeyMode = false; UiKeySel = -1; UiPickPos = false; UiCatMode = false; return; }
             if (act == A_CLEARF) { SpawnFilter = ""; UiShownDirty = true; return; }
             if (act == A_PGUP) { UiPage--; UiClampPage(); return; }
             if (act == A_PGDN) { UiPage++; UiClampPage(); return; }
@@ -1094,7 +1194,7 @@ namespace CasualtiesGodMode
             for (int i = 0; i < UiRowList.Count; i++)
             {
                 int idx = UiPage * UI_ROWS + i;
-                if (idx >= UiShown.Count) break;
+                if (idx >= UiListCount()) break;
                 if (RectTransformUtility.RectangleContainsScreenPoint(UiRowList[i].Rt, mp, null))
                 {
                     UiHover = i;
@@ -1104,7 +1204,13 @@ namespace CasualtiesGodMode
 
             if (Input.GetMouseButtonDown(0))
             {
-                if (UiHover >= 0) { UiSel = UiHover; SpawnRow(UiHover); return; }
+                if (UiHover >= 0)
+                {
+                    UiSel = UiHover;
+                    if (UiCatMode) PickCatRow(UiHover);   // 分类总览：点一下 = 进这个分类
+                    else SpawnRow(UiHover);
+                    return;
+                }
                 for (int i = 0; i < UiBtnList.Count; i++)
                 {
                     if (RectTransformUtility.RectangleContainsScreenPoint(UiBtnList[i].Rt, mp, null))
@@ -1151,8 +1257,25 @@ namespace CasualtiesGodMode
                 if (Input.GetKeyDown(KeyCode.Home)) { UiPage = 0; UiSel = 0; }
                 if (Input.GetKeyDown(KeyCode.End)) { UiPage = UiPageCount() - 1; UiClampPage(); }
                 if (Input.GetKeyDown(KeyCode.Tab)) CycleCat(1);
-                if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) SpawnRow(UiSel);
+                if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                {
+                    if (UiCatMode) PickCatRow(UiSel);
+                    else SpawnRow(UiSel);
+                }
+                if (Input.GetKeyDown(KeyCode.Backspace) && UiCatMode) DoAction(A_BACKCAT);
             }
+        }
+
+        // 分类总览里点了一行：进这个分类
+        internal static void PickCatRow(int row)
+        {
+            int idx = UiPage * UI_ROWS + row;
+            if (idx < 0 || idx >= UiCatList.Count) return;
+            SpawnCat = UiCatList[idx];
+            UiCatMode = false;
+            UiPage = 0;
+            UiSel = 0;
+            UiShownDirty = true;
         }
 
         internal static void UiRefresh()
@@ -1218,8 +1341,14 @@ namespace CasualtiesGodMode
                 UiClampPage();
 
                 if (UiTitle != null)
-                    UiTitle.text = "生成器（物品 / 生物 / 怪物 / 植物 / 建筑 / 方块）- 全部 " + SpawnIds.Count
-                        + " 种 / 当前筛选 " + UiShown.Count + " 件 / 第 " + (UiPage + 1) + "/" + pc + " 页";
+                {
+                    if (UiCatMode)
+                        UiTitle.text = "生成器 - 选个分类（" + SpawnGroup + "）  共 " + UiCatList.Count
+                            + " 类 / 全部 " + SpawnIds.Count + " 种 / 第 " + (UiPage + 1) + "/" + pc + " 页";
+                    else
+                        UiTitle.text = "生成器 - [" + SpawnCat + "]  " + UiShown.Count + " 件 / 全部 " + SpawnIds.Count
+                            + " 种 / 第 " + (UiPage + 1) + "/" + pc + " 页";
+                }
 
                 float cond = (CSpawnCond != null) ? CSpawnCond.Value : 1f;
                 bool pk = (CSpawnPickup != null && CSpawnPickup.Value);
@@ -1227,27 +1356,48 @@ namespace CasualtiesGodMode
                     ? ("   生成中 " + SpawnDone + "/" + SpawnTotal + " 失败 " + SpawnFail + "，剩 " + SpawnQueue.Count)
                     : "";
                 if (UiInfo != null)
-                    UiInfo.text = "分组: " + SpawnGroup + "    子分类: " + SpawnCat
-                        + "（本分组 " + CatListForGroup().Count + " 类，◀▶ 或 Tab 切换）\n"
-                        + "筛选: " + (SpawnFilter.Length > 0 ? SpawnFilter : "(空)") + (UiSearchMode ? "  << 输入中 >>" : "（按 / 输入）")
-                        + "   放置: " + PosModeName() + PosInfo()
-                        + "   耐久: " + Mathf.RoundToInt(cond * 100f) + "%"
-                        + "   拾取: " + (pk ? "开" : "关") + q;
+                {
+                    if (UiCatMode)
+                        UiInfo.text = "左边这一列就是「" + SpawnGroup + "」下的全部细分类，点一行进去（每个分类后面的数字是里面的数量）\n"
+                            + "分类名里的斜杠表示层级，例如「物品/医疗/药品」   筛选: "
+                            + (SpawnFilter.Length > 0 ? SpawnFilter : "(空)") + (UiSearchMode ? "  << 输入中 >>" : "")
+                            + "   放置: " + PosModeName() + PosInfo();
+                    else
+                        UiInfo.text = "分组: " + SpawnGroup + "    子分类: " + SpawnCat
+                            + "（本分组 " + CatListForGroup().Count + " 类，点左边这个标签看全部，◀▶ 或 Tab 逐个切）\n"
+                            + "筛选: " + (SpawnFilter.Length > 0 ? SpawnFilter : "(空)") + (UiSearchMode ? "  << 输入中 >>" : "（按 / 输入）")
+                            + "   放置: " + PosModeName() + PosInfo()
+                            + "   耐久: " + Mathf.RoundToInt(cond * 100f) + "%"
+                            + "   拾取: " + (pk ? "开" : "关") + q;
+                }
 
                 for (int i = 0; i < UiRowList.Count; i++)
                 {
                     int idx = UiPage * UI_ROWS + i;
                     UiRow u = UiRowList[i];
-                    if (idx >= UiShown.Count)
+                    int total = UiListCount();
+                    if (idx >= total)
                     {
                         u.Tx.text = "";
                         u.Bg.color = new Color(1f, 1f, 1f, 0f);
                         continue;
                     }
-                    int k = UiShown[idx];
                     string mark = (i == UiSel) ? "> " : "  ";
-                    string extra = (SpawnKinds[k] == K_BLOCK) ? ("方块#" + SpawnBlocks[k]) : SpawnIds[k];
-                    u.Tx.text = mark + "[" + SpawnCats[k] + "] " + SpawnNames[k] + "   (" + extra + ")";
+                    if (UiCatMode)
+                    {
+                        // 分类总览：一行一个分类，后面跟这一类的数量
+                        string cn = UiCatList[idx];
+                        int cnt = CountOfCat(cn);
+                        string shown = (cn == "全部") ? cn : cn.Substring(cn.LastIndexOf('/') + 1);
+                        u.Tx.text = mark + "▶ " + shown + "      " + cnt + " 件"
+                            + (cn == "全部" ? "" : ("   " + cn));
+                    }
+                    else
+                    {
+                        int k = UiShown[idx];
+                        string extra = (SpawnKinds[k] == K_BLOCK) ? ("方块#" + SpawnBlocks[k]) : SpawnIds[k];
+                        u.Tx.text = mark + "[" + SpawnCats[k] + "] " + SpawnNames[k] + "   (" + extra + ")";
+                    }
                     if (i == UiHover) u.Bg.color = new Color(0.28f, 0.40f, 0.62f, 0.85f);
                     else if (i == UiSel) u.Bg.color = new Color(0.30f, 0.42f, 0.22f, 0.55f);
                     else if ((idx % 2) == 1) u.Bg.color = new Color(1f, 1f, 1f, 0.045f);
@@ -1258,8 +1408,14 @@ namespace CasualtiesGodMode
                 RefreshBtnLabels(cond, pk);
 
                 if (UiHint != null)
-                    UiHint.text = "鼠标左键点一行 = 生成    滚轮/PageUp/PageDown = 翻页    ↑↓ 选中 + 回车 = 生成\n"
-                        + "第一排切换大分类    ◀▶/Tab 切子分类    「选点」后点世界任意位置 = 指定生成点    / 搜索    Esc 关窗口    F8 开关";
+                {
+                    if (UiCatMode)
+                        UiHint.text = "点一行 = 进这个分类    滚轮/PageUp/PageDown = 翻页    ↑↓ + 回车 = 进分类\n"
+                            + "第一排切换大分类    Backspace 或点上面的绿色标签 = 返回列表    / 搜索    Esc 关窗口    F8 开关";
+                    else
+                        UiHint.text = "鼠标左键点一行 = 生成    滚轮/PageUp/PageDown = 翻页    ↑↓ 选中 + 回车 = 生成\n"
+                            + "第一排切换大分类    ◀▶/Tab 切子分类    点中间那个子分类标签 = 看全部分类    「选点」后点世界 = 指定生成点    / 搜索    Esc 关窗口    F8 开关";
+                }
             }
             catch (Exception e)
             {
@@ -1277,8 +1433,8 @@ namespace CasualtiesGodMode
             {
                 UiBtn b = UiBtnList[i];
                 string s = b.Tx.text;
-                if (b.Act >= A_G_ALL && b.Act <= A_G_BLOCK) s = GroupNames[b.Act - A_G_ALL];
-                else if (b.Act == 0) s = SpawnCat;
+                if (IsGroupAct(b.Act)) s = GroupNames[GroupIdx(b.Act)];
+                else if (b.Act == A_BACKCAT) s = UiCatMode ? ("◀ 返回列表：" + SpawnCat) : ("▼ " + SpawnCat + "（点这里选分类）");
                 else if (b.Act == A_CAT_ALL) s = "子分类=全部";
                 else if (b.Act == A_CAT_PREV) s = "<<";
                 else if (b.Act == A_CAT_NEXT) s = ">>";
@@ -1300,13 +1456,14 @@ namespace CasualtiesGodMode
                 else if (b.Act == A_KBRESET) s = "重置键位";
                 if (b.Tx.text != s) b.Tx.text = s;
 
-                if (b.Act >= A_G_ALL && b.Act <= A_G_BLOCK && GroupNames[b.Act - A_G_ALL] == SpawnGroup)
+                if (IsGroupAct(b.Act) && GroupNames[GroupIdx(b.Act)] == SpawnGroup)
                     b.Bg.color = new Color(0.30f, 0.46f, 0.30f, 0.98f);
                 else if (b.Act == A_PICKPOS && UiPickPos) b.Bg.color = new Color(0.62f, 0.32f, 0.18f, 0.98f);
                 else if (b.Act == A_PICKPOS && ((CSpawnPosMode != null ? CSpawnPosMode.Value : 2) == 2))
                     b.Bg.color = new Color(0.30f, 0.46f, 0.30f, 0.98f);
                 else if (b.Act == A_SEARCH && UiSearchMode) b.Bg.color = new Color(0.55f, 0.42f, 0.15f, 0.98f);
                 else if (b.Act == A_KEYBINDS && UiKeyMode) b.Bg.color = new Color(0.55f, 0.42f, 0.15f, 0.98f);
+                else if (b.Act == A_BACKCAT && UiCatMode) b.Bg.color = new Color(0.30f, 0.46f, 0.30f, 0.98f);
                 else if (b.Act == A_KBRESET && UiKeyMode) b.Bg.color = new Color(0.46f, 0.30f, 0.30f, 0.98f);
                 else if (b.Act == A_STOP && SpawnQueue.Count > 0) b.Bg.color = new Color(0.55f, 0.20f, 0.20f, 0.98f);
                 else b.Bg.color = new Color(0.22f, 0.27f, 0.38f, 0.98f);
@@ -1338,6 +1495,22 @@ namespace CasualtiesGodMode
             Body p = PlayerBody();
             if (p == null) return false;
             return b == p;
+        }
+
+        // ------------------------------------------------------------------
+        //  窗口打开时把移动方向清零（v1.2.0）
+        //  HandleInput 被前缀挡掉以后，body.moveDir 不再被改写，会一直保留打开窗口前
+        //  按住的最后一个方向 —— 飞行(ConsoleScript 的 noClip)和走路都用它，于是人就会
+        //  朝着那个方向一直飘。所以每帧主动清零。只清 moveDir，不动刚体速度，
+        //  免得把人吊在半空。
+        // ------------------------------------------------------------------
+        internal static void FreezePlayerIfNeeded()
+        {
+            if (!SpawnerOn) return;
+            if (CFreezeInput != null && !CFreezeInput.Value) return;
+            Body b = PlayerBody();
+            if (b == null) return;
+            try { b.moveDir = Vector2.zero; } catch { }
         }
 
         internal static void RestoreBody(Body b)
@@ -1408,6 +1581,49 @@ namespace CasualtiesGodMode
             b.eyeGone = false;            // rippedeye        眼睛
             b.bothEyesGone = false;       // rippedeyes
 
+            // ---- 药物 / 成瘾状态全清（v1.2.0）----
+            // 依据：MoodleManager.AddAllMoodles() 里 overdose1..4 / withdrawal1..4 / drugoverdose /
+            // stimulated / energized / focused 这几个图标的真实来源。之前只清了 Body 自己的字段，
+            // 漏掉了真正的源头 —— 挂在身上的 Painkillers 组件（opiateReception 才是成瘾值的真身），
+            // 所以吃止疼片吃到戒断以后，不管点多少次清除都还挂着「戒断」。
+            try
+            {
+                Painkillers pk = b.GetComponent<Painkillers>();
+                if (pk != null)
+                {
+                    pk.opiateAmount = 0f;            // 体内阿片总量
+                    pk.opiateTolerance = 0f;         // 耐受
+                    pk.opiateReception = 0f;         // 受体占用
+                    pk.antagonistAmount = 0f;        // 拮抗剂（纳洛酮之类）
+                    pk.actualOpiateReception = 0f;   // ★ overdose/withdrawal 图标直接读这个
+                }
+            }
+            catch { }
+
+            b.stimulantMultiplier = 1f;   // stimulated   兴奋剂倍率
+            b.caffeinated = 0f;           // energized    咖啡因
+            b.onHardStimulants = false;   // stimulated   强效兴奋剂
+            b.focusedLevel = 0f;          // focused      专注
+            b.overdoseIndex = 0;
+            SetF(b, "usedNeuralBooster", false);
+            SetF(b, "desensitizedMult", 1f);
+            SetF(b, "goodSleepTime", 0f);
+            SetF(b, "lastStandTime", 0f);
+            SetF(b, "triedRollingLastStand", false);
+            SetF(b, "succesfullyRolledLastStand", false);
+            SetF(b, "specialCrying", false);
+            SetF(b, "temporarySlowdown", false);
+            SetF(b, "slowdownAmount", 0f);
+            SetF(b, "liquidSlipTime", 0f);
+            SetF(b, "liquidRagdollBar", 0f);
+            SetF(b, "overrideLookTime", 0f);
+            SetF(b, "eyeCloseTime", 0f);
+            SetF(b, "eyeScareTime", 0f);
+            SetF(b, "eyePanicTime", 0f);
+            SetF(b, "bothLegsAmputated", false);
+            SetF(b, "clothingTemperature", V_TEMP);
+            try { if (b.vomiter != null) b.vomiter.enabled = false; } catch { }
+
             Limb[] ls = b.limbs;
             if (ls != null)
             {
@@ -1423,6 +1639,13 @@ namespace CasualtiesGodMode
                     l.broken = false;
                     l.dislocated = false;
                     l.dismembered = false;
+                    // ★ v1.2.0 关键修复：断肢以后不能再开枪
+                    //   Limb.Dismember() 除了把 dismembered 置 true，还会对自己和所有下级肢体
+                    //   调用 gameObject.SetActive(false) —— 整个手臂对象被停用。
+                    //   以前这里只把 dismembered 改回 false，对象却一直是停用的，
+                    //   于是「手臂能看见了但用不了枪 / 瞄不准 / 拿不起东西」。必须重新激活。
+                    try { if (!l.gameObject.activeSelf) l.gameObject.SetActive(true); }
+                    catch { }
                     SetF(l, "infected", false);
                     SetF(l, "splinted", false);
                     SetF(l, "strokeAffected", false);
@@ -1875,45 +2098,152 @@ namespace CasualtiesGodMode
                 || low.Contains("frig") || low.Contains("xalor") || low.Contains("cact");
         }
 
+        // 名字里含有任意一个关键词就算命中
+        internal static bool W(string s, params string[] keys)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            for (int i = 0; i < keys.Length; i++)
+            {
+                if (!string.IsNullOrEmpty(keys[i]) && s.Contains(keys[i])) return true;
+            }
+            return false;
+        }
+
+        // 植物再细分（v1.2.0）
+        internal static string PlantSub(string low)
+        {
+            if (W(low, "mushroom", "shroom", "cap")) return "植物/蘑菇";
+            if (W(low, "tree", "trunk", "log")) return "植物/树木";
+            if (W(low, "vine", "rope", "hook", "creeper")) return "植物/藤蔓";
+            if (W(low, "grass", "bush", "fern", "weed", "moss", "lichen", "clover", "sprout")) return "植物/草丛";
+            if (W(low, "crop", "wheat", "rye", "corn", "pumpkin", "potato", "carrot", "berry", "fruit", "pod", "seed")) return "植物/作物";
+            if (W(low, "flower", "rose", "bloom", "petal", "coral", "kelp", "alga", "cact")) return "植物/花藻";
+            return "植物/其它";
+        }
+
+        // 会动的东西再细分
+        internal static string AnimalSub(string low)
+        {
+            if (W(low, "spider", "tick", "crawler", "strider", "biter", "thornback", "grabber", "shade", "worm", "slug")) return "生物/怪物";
+            if (W(low, "trader", "merchant", "haggle")) return "生物/商人";
+            return "生物/动物";
+        }
+
+        // 建筑再细分（v1.2.0）
+        internal static string BuildSub(string low, HashSet<string> comps)
+        {
+            if (W(low, "door", "gate", "wall", "fence", "barrier", "window", "hatch", "airlock", "bulkhead")) return "建筑/门墙";
+            if (W(low, "workbench", "bench", "craft", "furnace", "forge", "anvil", "cooker", "grill", "assembler")) return "建筑/工作台";
+            if (W(low, "power", "generator", "battery", "wire", "cable", "lamp", "light", "solar", "reactor", "conduit", "antenna", "terminal", "computer", "screen", "panel")) return "建筑/电力";
+            if (W(low, "chest", "container", "storage", "crate", "locker", "cabinet", "shelf", "rack", "box", "bin")) return "建筑/存储";
+            if (W(low, "med", "heal", "surgery", "autodoc", "defib", "clon", "hospital", "recharg")) return "建筑/医疗";
+            if (W(low, "turret", "trap", "mine", "saw", "blade", "laser", "cannon", "alarm", "sentr")) return "建筑/防御";
+            if (W(low, "bed", "chair", "sofa", "seat", "table", "toilet", "shower", "sink", "rug", "carpet", "desk", "stool")) return "建筑/家具";
+            if (W(low, "crystal")) return "建筑/水晶";
+            return "建筑/设施";
+        }
+
+        // 方块再细分。注意 BlockInfo.name 在运行时已经是本地化名（中文），
+        // 所以中英文关键词都要写，游戏语言换了也不会全掉进「其它」。
+        internal static string BlockSub(string n)
+        {
+            string s = (n ?? "").ToLowerInvariant();
+            if (W(s, "air", "空气", "真空")) return "方块/空气";
+            if (W(s, "water", "lava", "acid", "liquid", "oil", "sludge", "blood", "水", "岩浆", "酸", "液", "油", "血")) return "方块/液体";
+            if (W(s, "ore", "crystal", "gem", "coal", "矿", "晶", "煤")) return "方块/矿物";
+            if (W(s, "rock", "stone", "granite", "basalt", "gravel", "sand", "dirt", "soil", "clay", "mud", "ice", "snow",
+                     "岩", "石", "沙", "土", "壤", "泥", "冰", "雪")) return "方块/岩土";
+            if (W(s, "grass", "moss", "vine", "root", "wood", "log", "leaf", "fungus", "shroom",
+                     "草", "苔", "藤", "根", "木", "叶", "菌", "菇")) return "方块/有机";
+            if (W(s, "wall", "floor", "tile", "brick", "metal", "glass", "scrap", "reinforced",
+                     "墙", "地", "砖", "金属", "玻璃", "板")) return "方块/建材";
+            return "方块/其它";
+        }
+
+        // 物品再细分（v1.2.0）。游戏自己的 category 只有 8 个粗桶（custom 里塞了几十个），
+        // 所以这里先用「穿得上的 / 打得响的」这两条硬指标切开，再退回游戏分类。
+        internal static string ItemCat(string id, ItemInfo info, string gameCat)
+        {
+            string s = (id ?? "").ToLowerInvariant();
+            bool wearable = false, lmb = false, auto = false;
+            try { if (info != null) { wearable = info.wearable; lmb = info.usableWithLMB; auto = info.autoAttack; } }
+            catch { }
+
+            if (W(s, "ammo", "round", "magazine", "mag", "cartridge", "bullet", "shell", "grenade", "arrow", "bolt", "flare"))
+                return "物品/弹药";
+            if (wearable)
+            {
+                if (W(s, "armor", "vest", "plate", "helmet", "suit", "mask", "goggles")) return "物品/穿戴/护甲";
+                return "物品/穿戴/服装";
+            }
+            if (W(s, "gun", "rifle", "pistol", "shotgun", "revolver", "smg", "carbine", "launcher", "musket",
+                     "flamethrower", "nailgun", "minigun", "blaster", "laser")) return "物品/武器/枪械";
+            if (W(s, "knife", "axe", "machete", "sword", "spear", "club", "bat", "hammer", "wrench", "crowbar",
+                     "shiv", "saw", "pickaxe", "shovel", "claw")) return "物品/武器/近战";
+            if (lmb || auto) return "物品/武器/其它";
+
+            if (gameCat == "medical")
+            {
+                if (W(s, "bandage", "dressing", "gauze", "splint", "tourniquet", "suture", "stitch")) return "物品/医疗/包扎";
+                return "物品/医疗/药品";
+            }
+            if (gameCat == "drug") return "物品/医疗/药物";
+            if (gameCat == "food") return "物品/食物";
+            if (gameCat == "water") return "物品/饮料";
+            if (gameCat == "container") return "物品/容器";
+            if (gameCat == "trash") return "物品/垃圾";
+            if (gameCat == "utility") return "物品/工具";
+
+            if (W(s, "medkit", "pill", "syringe", "antibiotic", "morphine", "painkiller", "bandage", "iv", "stimpack"))
+                return "物品/医疗/药品";
+            if (W(s, "food", "meat", "bread", "berry", "ration", "cooked", "raw", "fish", "egg", "jerky", "soup"))
+                return "物品/食物";
+            if (W(s, "water", "drink", "bottle", "juice", "soda", "coffee", "tea", "canteen", "flask"))
+                return "物品/饮料";
+            if (W(s, "key", "card", "note", "paper", "book", "map", "radio", "battery", "cell", "wire", "scrap",
+                     "ore", "ingot", "cloth", "rope", "tape", "glue", "screw", "nail", "part", "component", "circuit"))
+                return "物品/材料";
+            return "物品/其它";
+        }
+
         // 给一个 prefab 分类。判断依据是它身上挂了哪些组件（按类型名，避免引用可能不存在的类型）。
-        // v0.9.0 按实测清单重排了顺序、修掉了几处误判。
+        // v1.2.0：从 6 个大类细分成「生物/怪物、生物/动物、植物/树木、建筑/门墙…」这种两级结构。
         internal static string ClassifyPrefab(GameObject go, BuildingEntity be, HashSet<string> comps)
         {
             try
             {
-                // 1) 明确是怪/敌人的
-                if (comps.Contains("CrystalEnemy")) return "生物/怪物";
-                if (comps.Contains("TraderScript")) return "生物/商人";
-                if (comps.Contains("SpiderHandler") || comps.Contains("SpiderHandlerTBE")
-                    || comps.Contains("CaveTickSpawner") || comps.Contains("ElderThornbackBehaviour")) return "生物/怪物";
+                string low = (go != null ? go.name : "").ToLowerInvariant();
 
-                // 2) 明确是植物的
-                if (comps.Contains("GrabberPlant") || comps.Contains("BananaPlantSlip")) return "植物";
-
-                // 3) 尸体单独一类（它们身上挂的是 CorpseScript，不是活物）
+                // 1) 尸体单独一类（它们身上挂的是 CorpseScript，不是活物）
                 if (comps.Contains("CorpseScript")) return "其它/尸体";
+
+                // 2) 明确是怪 / 商人 / 水晶簇的
+                if (comps.Contains("CrystalEnemy")) return "生物/怪物";
+                if (comps.Contains("CrystalBehaviour")) return "建筑/水晶";
+                if (comps.Contains("TraderScript")) return "生物/商人";
+                if (comps.Contains("SpiderHandler") || comps.Contains("SpiderHandlerTBE")) return "生物/怪物";
+                if (comps.Contains("CaveTickSpawner") || comps.Contains("ElderThornbackBehaviour")) return "生物/怪物";
+
+                // 3) 植物：挂了植物脚本的，或者名字命中植物词
+                if (comps.Contains("GrabberPlant") || comps.Contains("BananaPlantSlip")) return PlantSub(low);
+                if (PlantWord(low)) return PlantSub(low);
 
                 // 4) 会动的活物（BuildingEntity.animal 是游戏自己的标志）
                 bool animal = false;
                 try { if (be != null) animal = be.animal; } catch { }
-                if (animal) return "生物/动物";
+                if (animal) return AnimalSub(low);
                 if (comps.Contains("Body")) return "生物/怪物";
+                if (comps.Contains("Talker")) return "生物/NPC";
 
                 // 5) 本身就是掉落的物品
-                if (comps.Contains("Item")) return "物品";
+                if (comps.Contains("Item")) return "物品/材料";
 
-                // 6) 名字像植物的（关键词表已补全）
-                string low = (go != null ? go.name : "").ToLowerInvariant();
-                if (PlantWord(low)) return "植物";
-
-                // 7) 水晶簇是装饰矿物，不是怪（crystalenemy 上面已经归到怪物了）
-                if (comps.Contains("CrystalBehaviour") || low.Contains("crystal")) return "建筑/水晶";
-
-                // 8) 剩下的建筑实体
-                if (comps.Contains("BuildingEntity")) return "建筑/设施";
-                return "其它";
+                // 6) 剩下的建筑实体，按名字细分
+                if (comps.Contains("BuildingEntity")) return BuildSub(low, comps);
+                if (comps.Contains("UsableObject")) return "其它/可交互";
+                return "其它/杂项";
             }
-            catch { return "其它"; }
+            catch { return "其它/杂项"; }
         }
 
         // 查游戏自己的本地化表：命中返回译文，未命中原样返回 key（所以要把 key 本身当失败）
@@ -2017,17 +2347,16 @@ namespace CasualtiesGodMode
                             string ln = Loc(kv.Key);
                             if (ln != null) nm = ln;
                         }
-                        string cat = (info != null && !string.IsNullOrEmpty(info.category)) ? info.category : "其它";
-                        // category 是游戏内部的英文键（medical/food/tool…），显示前换成中文
-                        if (cat != "其它")
-                        {
-                            string lc = Loc(cat);
-                            if (lc != null) cat = lc;
-                        }
-                        AddSpawn(kv.Key, nm, "物品/" + cat, K_ITEM, null, 0);
+                        // v1.2.0：游戏自己的 category 只有 8 个粗桶（custom 一个桶就塞了几十个），
+                        // 所以改成先用「穿得上的 / 打得响的」硬指标 + 关键词细分，再退回游戏分类。
+                        string gcat = (info != null && !string.IsNullOrEmpty(info.category)) ? info.category : "";
+                        string cat = ItemCat(kv.Key, info, gcat);
+                        AddSpawn(kv.Key, nm, cat, K_ITEM, null, 0);
                         seen.Add(kv.Key);
-                        cats.Add("物品/" + cat);
+                        cats.Add(cat);
                         nItem++;
+                        if (dump != null) dump.Append(cat).Append(" | ").Append(kv.Key).Append(" | ").Append(nm)
+                            .Append(" | ").Append(gcat).Append("\r\n");
                     }
                 }
 
@@ -2044,9 +2373,16 @@ namespace CasualtiesGodMode
 
                         Item it = null;
                         BuildingEntity be = null;
+                        UsableObject uo = null;
                         try { it = go.GetComponent<Item>(); } catch { it = null; }
                         try { be = go.GetComponent<BuildingEntity>(); } catch { be = null; }
-                        if (it == null && be == null) continue;
+                        // v1.2.0：光有 Item/BuildingEntity 会漏掉游戏里一大批可交互物件
+                        // （家具、终端、可拉可用的东西），它们的共同祖先是 UsableObject。
+                        if (it == null && be == null)
+                        {
+                            try { uo = go.GetComponent<UsableObject>(); } catch { uo = null; }
+                            if (uo == null) continue;
+                        }
 
                         seen.Add(gn);
                         string comps = CollectComponents(go);
@@ -2068,7 +2404,7 @@ namespace CasualtiesGodMode
                     if (w != null)
                     {
                         int miss = 0;
-                        for (int id = 0; id < 4096 && miss < 256; id++)
+                        for (int id = 0; id < 4096 && miss < 512; id++)
                         {
                             BlockInfo bi = null;
                             try { bi = w.GetBlockInfo((ushort)id); }
@@ -2076,8 +2412,10 @@ namespace CasualtiesGodMode
                             if (bi == null) { miss++; continue; }
                             miss = 0;
                             string bn = string.IsNullOrEmpty(bi.name) ? ("未知方块" + id) : bi.name;
-                            AddSpawn("block" + id, bn, "方块", K_BLOCK, null, id);
+                            string bcat = BlockSub(bn);
+                            AddSpawn("block" + id, bn, bcat, K_BLOCK, null, id);
                             nBlk++;
+                            if (dump != null) dump.Append(bcat).Append(" | block").Append(id).Append(" | ").Append(bn).Append("\r\n");
                         }
                         cats.Add("方块");
                     }
@@ -2122,7 +2460,7 @@ namespace CasualtiesGodMode
                     try
                     {
                         File.WriteAllText(InventoryDumpPath(),
-                            "分类 | prefab名 | 身上的组件\r\n" + dump.ToString(), System.Text.Encoding.UTF8);
+                            "分类 | id | 显示名 | 附带信息（物品=游戏原始分类 / 实体=身上组件）\r\n" + dump.ToString(), System.Text.Encoding.UTF8);
                     }
                     catch { }
                 }
@@ -2426,17 +2764,25 @@ namespace CasualtiesGodMode
         internal static bool MatchFilter(int i)
         {
             if (i < 0 || i >= SpawnIds.Count) return false;
+
+            // v1.2.0：一旦开始搜索，就无视当前分组/分类 —— 否则你在「物品」里搜怪物名
+            // 永远搜不到，这也是「菜单里很多东西找不到」的主要原因之一。
+            if (SpawnFilter.Length > 0)
+            {
+                string f = SpawnFilter.ToLowerInvariant();
+                return SpawnIds[i].ToLowerInvariant().Contains(f)
+                    || SpawnNames[i].ToLowerInvariant().Contains(f)
+                    || SpawnCats[i].ToLowerInvariant().Contains(f);
+            }
+
             if (SpawnGroup != "全部")
             {
                 string c = SpawnCats[i];
                 if (c != SpawnGroup && !c.StartsWith(SpawnGroup + "/")) return false;
             }
-            if (SpawnCat != "全部" && SpawnCats[i] != SpawnCat) return false;
-            if (SpawnFilter.Length == 0) return true;
-            string f = SpawnFilter.ToLowerInvariant();
-            return SpawnIds[i].ToLowerInvariant().Contains(f)
-                || SpawnNames[i].ToLowerInvariant().Contains(f)
-                || SpawnCats[i].ToLowerInvariant().Contains(f);
+            // 分类可以多级（如「物品/医疗/药品」），选中间那一级时把下级一起算进来
+            if (SpawnCat != "全部" && !CatInGroup(SpawnCats[i], SpawnCat)) return false;
+            return true;
         }
 
         internal static readonly List<string> SpawnCats_Sorted = new List<string>();
@@ -2576,6 +2922,7 @@ namespace CasualtiesGodMode
             MethodInfo preLevel = typeof(Patches).GetMethod("Pre_CheckForLevelUp");
             MethodInfo preAdd = typeof(Patches).GetMethod("Pre_AddExp");
             MethodInfo preAttack = typeof(Patches).GetMethod("Pre_Attack");
+            MethodInfo preCamInput = typeof(Patches).GetMethod("Pre_CamInput");
 
             Hook("Body.HandleBody(每帧身体模拟)", typeof(Body), "HandleBody", preBody, postBody);
             Hook("Body.HandleCirculation(血液循环/脑死亡)", typeof(Body), "HandleCirculation", preCirc, null);
@@ -2602,6 +2949,12 @@ namespace CasualtiesGodMode
             // 它内部把 atk.damage / atk.structuralDamage 分别喂给生物血量与建筑/方块血量，
             // 所以只在前缀里把这两个数放大，就能做到「打一下，万物皆碎」。
             Hook("Body.Attack(一击必杀)", typeof(Body), "Attack", preAttack, null);
+
+            // 窗口打开时冻结玩家操作（v1.2.0）：
+            // PlayerCamera.Update 的调用序列是 HandleInput() -> 里面再调 HandleAttacks()，
+            // 也就是说「走动、瞄准、挥拳、开枪、用道具」全部收口在 HandleInput 这一个方法里。
+            // 前缀返回 false 整个跳过，于是点菜单的时候角色不会跟着走、也不会顺手挥拳。
+            Hook("PlayerCamera.HandleInput(菜单时冻结操作)", typeof(PlayerCamera), "HandleInput", preCamInput, null);
         }
 
         static void Hook(string label, Type t, string name, MethodInfo pre, MethodInfo post)
@@ -2801,6 +3154,22 @@ namespace CasualtiesGodMode
                     GodModePlugin.L.LogWarning("[GodMode][一击必杀] 放大伤害失败: " + e.Message);
                 }
             }
+        }
+
+        // ---- 窗口打开时冻结玩家操作（v1.2.0）----
+        // 用户反馈：用生成器的时候角色会跟着鼠标转、会走、会顺手挥拳/开枪。
+        // 原因是游戏自己的 PlayerCamera.HandleInput 照样在跑 —— 它读 WASD 写 body.moveDir，
+        // 又把鼠标左键变成 HandleAttacks()。这里直接让 handleInput 整个不执行，
+        // 我们的窗口不受影响（uGUI 的点击是 UiInput() 自己读 Input 做的，不走这条链）。
+        public static bool Pre_CamInput(PlayerCamera __instance)
+        {
+            try
+            {
+                if (!GodModePlugin.SpawnerOn) return true;
+                if (GodModePlugin.CFreezeInput != null && !GodModePlugin.CFreezeInput.Value) return true;
+                return false;
+            }
+            catch { return true; }
         }
     }
 

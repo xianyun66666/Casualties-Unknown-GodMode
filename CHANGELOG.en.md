@@ -4,6 +4,95 @@ All notable changes to this mod. This project follows [Semantic Versioning](http
 
 ---
 
+## [1.2.0] — 2026-10-18 — dismemberment fix, drug cleanup, finer categories
+
+Two long-standing bugs that really hurt, plus a rebuilt spawn window that groups things
+by category instead of one endless list.
+
+### Fixed: no guns after losing an arm
+
+**Symptom**: once an arm was bitten or cut off, healing it — no matter how many times, no
+matter how full the health bars went — never brought the gun back up. Melee felt limp too.
+
+**Root cause**: `Limb.Dismember()` does more than set `dismembered = true`; it also calls
+`gameObject.SetActive(false)` — **the limb object itself is deactivated**. "Full heal" only
+flipped `dismembered` back to `false` and refilled `skinHealth` / `muscleHealth`, and never
+re-enabled the object. At engine level that arm still did not exist, so aiming, holding a
+gun and swinging all failed.
+
+**Fix**: healing now also calls `SetActive(true)` and clears `broken` / `dislocated` /
+`splinted` plus the bone-heal and dislocation timers. The limb was deactivated, not
+destroyed, so prosthetics and armour attached to it survive.
+
+### Fixed: drug side effects would not clear
+
+**Symptom**: after Full Heal, "Overdose", "Withdrawal", "Stimulated" and "Energized" stayed
+on screen — and a while later you were shaking, losing blood and seeing stars again.
+
+**Root cause**: none of that state lives on `Body`. `overdose1~4` and `withdrawal1~4` come
+straight from `Painkillers.actualOpiateReception` (>50 / >20 / >5 is overdose,
+<-5 / -15 / -25 / -34 is withdrawal), `drugoverdose` reads `Body.overdoseIndex > 3`,
+`stimulated` reads `Body.onHardStimulants`, `energized` reads `Body.caffeinated > 0`.
+None of it was ever cleared.
+
+**Fix**: Full Heal now zeroes all five `Painkillers` values (`opiateAmount` /
+`opiateTolerance` / `opiateReception` / `antagonistAmount` / `actualOpiateReception`) and
+resets `onHardStimulants` / `caffeinated` / `stimulantMultiplier` / `overdoseIndex` /
+`focusedLevel`, along with neural-booster residue, desensitisation and vomiting.
+
+### Improved: finer categories
+
+The old window was one flat list, and the game only buckets items into 8 coarse categories
+(`custom` alone holds dozens). Now:
+
+- **Row 1** picks a top-level group: All / Items / Creatures / Plants / Structures / Blocks / Other.
+- **Picking a group lands you on a category grid** — each cell is one concrete category with a
+  live count; click a cell to narrow down to it.
+- **The row-2 category label** jumps back to the grid at any time.
+- Items split into `ammo` / `wearables (armour · clothing)` / `weapons (guns · melee · other)` /
+  `medical (dressings · medicine · drugs)` / `food` / `drinks` / `containers` / `junk` /
+  `tools` / `materials`.
+- Creatures split into `monsters` / `traders` / `animals` / `NPCs`; plants into `mushrooms` /
+  `trees` / `vines` / `groundcover` / `crops` / `flowers`; structures into `doors & walls` /
+  `workbenches` / `power` / `storage` / `medical` / `defence` / `furniture` / `crystal`;
+  blocks into seven material classes.
+- Classification is **component-first** (corpses, crystal enemies, traders and spiders each go
+  their own way); name keywords are only a fallback. So a sand rose is no longer filed as a
+  building, and a manifested crystal enemy is no longer filed as decoration.
+
+### Fixed: the character still moved while the window was open
+
+**Symptom**: clicking in the window made the character walk, punch and shoot.
+
+**Root cause**: only `Time.timeScale` was frozen, but player input is read in
+`PlayerCamera.HandleInput()`, which does not care about time scale at all.
+
+**Fix**: a prefix on `HandleInput` skips the whole method while the window is open (movement,
+aiming and attacks all at once), plus `body.moveDir` is zeroed as a safety net. Set
+`FreezeInputWhileOpen = false` if you would rather keep walking with the menu up.
+
+### Fixed: things could not be found in the window
+
+Two causes, both fixed:
+
+1. **Search was trapped inside the current group** — looking for a monster while the Items
+   group was selected found nothing. Typing a keyword now ignores group and category and
+   searches the whole list.
+2. **The list itself was incomplete** — entities only matched `Item` / `BuildingEntity`, which
+   missed everything deriving from `UsableObject` (furniture, terminals and so on). Block
+   probing tolerance went from 256 to 512, so sparse block ids are no longer truncated.
+
+### Notes
+
+- New config key `FreezeInputWhileOpen` (default `true`). Existing configs need no edits;
+  missing keys are filled in automatically.
+- The inventory dump log header changed to
+  `category | id | display name | extra` — for items the extra column is the game's own
+  category, for entities it is the component list. If something looks mis-filed, paste that
+  line into an issue.
+
+---
+
 ## [1.1.0] — 2026-10-17 — one-hit kill + rebindable keys
 
 ### New feature

@@ -1,6 +1,6 @@
 # GodMode — a cheat / sandbox mod for *Casualties: Unknown*
 
-A [BepInEx 5](https://github.com/BepInEx/BepInEx) plugin that gives you god mode, flight, max skills, a full-status-cleanse heal, teleport, fullbright, **one-hit kill** — and a big searchable **spawn-anything** window (items, creatures, monsters, plants, structures, terrain blocks), with the spawn point chosen by you and **keys you can rebind right inside the window**.
+A [BepInEx 5](https://github.com/BepInEx/BepInEx) plugin that gives you god mode, flight, max skills, a full-status-cleanse heal (including **drug overdose and withdrawal** — and severed limbs are reattached well enough to hold a gun again), teleport, fullbright, **one-hit kill** — and a big searchable **spawn-anything** window (items, creatures, monsters, plants, structures, terrain blocks) with **categories fine enough to actually find things**, the spawn point chosen by you, **keys you can rebind right inside the window**, and **the character frozen while the window is open**.
 
 [中文](README.md) · **English**
 
@@ -23,7 +23,7 @@ A [BepInEx 5](https://github.com/BepInEx/BepInEx) plugin that gives you god mode
 | `F1` | **God mode** | You cannot die. Health, blood, oxygen, hunger, thirst, stamina, temperature and every limb are held at full. Bleeding, infection, fractures, pain and dislocations are cleared continuously. |
 | `F2` | **Flight / noclip** | Free flight through terrain. Hold `LeftShift` for 4× speed. Soft-clamped to the world border so you can't fly out and crash the game. |
 | `F3` | **Max skills** | Strength / Resistance / Intelligence maxed. |
-| `F4` | **Cleanse** | Full heal **plus** removal of every negative status effect. |
+| `F4` | **Cleanse** | Full heal **plus** removal of every negative status effect — bleeding, infection, fractures, dislocations, pain, **drug overdose / withdrawal / stimulants / caffeine**. Severed limbs are reattached too (otherwise a healed arm still cannot hold a gun). |
 | `F5` | **Teleport** | Teleport to the mouse cursor. |
 | `F6` | **Fullbright** | Full map lighting. |
 | `F7` | **Starter kit** | Grants the starting loadout. |
@@ -69,8 +69,10 @@ The spawn window has a **"Key bindings"** button on the first row and a **"Reset
 
 Spawns **anything in the game**, pulled live from the game's own registries — so a game update that adds new items or creatures shows up automatically, with no mod update needed.
 
-- **Categories** — Everything / Items / Creatures / Plants / Structures / Blocks. Items are sub-categorised using the game's own item categories. Sub-categories are cycled with `◀ ▶` or `Tab`.
-- **Search** — press `/` and type.
+- **Pick a group, then pick a category** — row 1 is Everything / Items / Creatures / Plants / Structures / Blocks / Other. Choosing a group drops you onto a **category grid**: each cell is one concrete category with a live count, and clicking a cell narrows the list to it. The row-2 category label jumps back to the grid at any time.
+- **Fine enough to be useful** — items split into ammo / wearables (armour · clothing) / weapons (guns · melee) / medical (dressings · medicine · drugs) / food / drinks / containers / junk / tools / materials; creatures into monsters / traders / animals / NPCs; plants into mushrooms / trees / vines / groundcover / crops / flowers; structures into doors & walls / workbenches / power / storage / medical / defence / furniture / crystal; blocks into seven material classes. Classification is component-first with name keywords as a fallback, so a sand rose is no longer filed as a building.
+- **Search** — press `/` and type. **Typing a keyword ignores the current group and category** and searches the whole list, so you can find a monster while the Items group is selected.
+- **The character is frozen while the window is open** — movement, aiming and attacks are all skipped, so clicking the UI no longer walks you off a cliff. Set `FreezeInputWhileOpen = false` to keep walking with the menu up.
 - **Spawn position** — three modes: at your feet, at the mouse, or **at a point you pick yourself**. In pick mode you click anywhere in the world; an on-screen marker shows the exact world coordinates, and you can fine-tune with the arrow keys (hold `Shift` for 0.25-tile steps). Every spawn position is clamped inside the world bounds.
 - **Batch spawn** — "spawn all filtered", "random ×5", "random ×20", spread over a grid and queued a few per frame.
 - **Real names** — display names come from the game's own localisation tables, so you see "Ceiling Rye", not `ceilingrye`.
@@ -113,12 +115,12 @@ WINEDLLOVERRIDES="winhttp=n,b" %command%
 Open `<game folder>\BepInEx\LogOutput.log` and search for `GodMode`. A healthy startup looks like:
 
 ```
-[Info   :BepInEx] Loading [GodMode 1.0.0]
+[Info   :BepInEx] Loading [GodMode 1.2.0]
 [Info   :GodMode] [GodMode] hooked: PlayerCamera.Update
-...  (12 hook lines in total)
-[Info   :GodMode] [GodMode] loaded v1.0.0
+...  (16 hook lines in total)
+[Info   :GodMode] [GodMode] loaded v1.2.0
 [Info   :GodMode] [GodMode] watchdog started
-[Info   :GodMode] [GodMode][spawner] loaded: 284 items + 102 entities + 36 blocks = 422 entries
+[Info   :GodMode] [GodMode][spawner] loaded: 284 items + ... entities + ... blocks = ... entries
 [Info   :GodMode] [GodMode][ui] uGUI window created, font = ...
 ```
 
@@ -162,10 +164,11 @@ SpawnAutoPickup = true
 SpawnBatchPerFrame = 15
 SpawnMaxBatch = 800
 PauseWhileOpen = true        # freeze game time while the window is open
+FreezeInputWhileOpen = true  # freeze the character's controls (move/aim/attack); false = walk with the menu up
 DumpInventory = true         # export the spawn list to BepInEx\config for classification reports
 ```
 
-> If you want to report a **mis-categorised** entry, keep `DumpInventory = true`, open the window once, and attach `<game folder>\BepInEx\config\GodMode.spawnlist.log` (columns: `category | prefab | components`).
+> If you want to report a **mis-categorised** entry, keep `DumpInventory = true`, open the window once, and attach `<game folder>\BepInEx\config\GodMode.spawnlist.log` (columns: `category | id | display name | extra`).
 
 ---
 
