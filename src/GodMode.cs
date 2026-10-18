@@ -109,7 +109,7 @@ using UnityEngine.UI;
 
 namespace CasualtiesGodMode
 {
-    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.1")]
+    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.2")]
     public class GodModePlugin : BaseUnityPlugin
     {
         internal static ManualLogSource L;
@@ -301,7 +301,7 @@ namespace CasualtiesGodMode
             StartWatchdog();
             StartHud();
 
-            L.LogInfo("[GodMode] 已加载 v1.2.1");
+            L.LogInfo("[GodMode] 已加载 v1.2.2");
             L.LogInfo("[GodMode] 按键: 上帝=" + KGod + " 飞行=" + KFly + " 技能=" + KSkill
                 + " 治疗=" + KHeal + " 传送=" + KTp + " 全亮=" + KLight + " 装备=" + KKit
                 + " 生成器=" + KSpawner + " 一击必杀=" + KOneHit);
@@ -1600,7 +1600,15 @@ namespace CasualtiesGodMode
             }
             catch { }
 
-            b.stimulantMultiplier = 1f;   // stimulated   兴奋剂倍率
+            // ★★★ v1.2.2 关键修正：这里以前写的是 1f，那是「满剂量兴奋剂」，不是「干净」。
+            //   证据（Assembly-CSharp.dll 反编译）：
+            //     Body::HandleVariableUpdates  →  stimulantMultiplier = Mathf.MoveTowards(stimulantMultiplier, 0f, Time.deltaTime * 0.02f);
+            //     Body::get_legSpeedMult       →  ... * (1 + stimulantMultiplier) * ...
+            //     Body::get_actualMaxSpeed     →  Mathf.Min(maxSpeed * (...) * (1 + stimulantMultiplier), ...)
+            //   即：★ 基线是 0，不是 1；速度与最高速都乘的是 (1 + stimulantMultiplier)。
+            //   写成 1f 等于给玩家挂了「双倍速度 + 双倍跳跃」，而且它每秒只衰减 0.02，
+            //   要 50 秒才自己归零 —— 表现就是「按完 F4 角色自己往前冲、跳得比平时高一倍」。
+            b.stimulantMultiplier = 0f;   // stimulated 兴奋剂倍率（★ 基线是 0，不是 1）
             b.caffeinated = 0f;           // energized    咖啡因
             b.onHardStimulants = false;   // stimulated   强效兴奋剂
             b.focusedLevel = 0f;          // focused      专注

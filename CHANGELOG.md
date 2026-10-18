@@ -6,6 +6,37 @@
 
 ---
 
+## [1.2.2] —— 2026-10-18 —— 角色不再自己乱走乱跳
+
+v1.2.0 的「清药物」里有一行把**中性的兴奋剂倍率写成了一个非中立的值**，导致按完 F4
+角色会以双倍速度自己往前冲、跳得比平时高一倍，而且要 50 秒才自己恢复。这一版修掉它。
+
+### 修复：按完 F4 角色会自己走动、跳得比正常高
+
+问题出在 `Body.stimulantMultiplier` 这个字段的**基线值**上。
+
+反编译 `Assembly-CSharp.dll`，游戏自己是这么用它的：
+
+```csharp
+// Body::HandleVariableUpdates —— 每帧朝 0 回落，每秒 0.02
+stimulantMultiplier = Mathf.MoveTowards(stimulantMultiplier, 0f, Time.deltaTime * 0.02f);
+
+// Body::get_legSpeedMult —— 移动速度
+... * (1 + stimulantMultiplier) * ...
+
+// Body::get_actualMaxSpeed —— 最高速度（跳跃也按它算）
+Mathf.Min(maxSpeed * (...) * (1 + stimulantMultiplier), ...)
+```
+
+也就是说：**这个字段的「干净」值是 0，不是 1**。速度乘的是 `1 + stimulantMultiplier`，
+写成 `1` 就等于 `×2` —— 双倍移速、双倍跳跃。而它每秒只回落 0.02，所以要
+**50 秒**才自己归零，看起来就像「角色永久在乱走」。
+
+v1.2.2 改成写 `0f`，并在源码里留了注释引用上面三条反编译证据，防止以后再写错。
+
+顺带确认：`stimulantMultiplier` **不驱动任何状态图标**（`stimulated` 图标读的是
+`onHardStimulants`，`energized` 读的是 `caffeinated`），所以清零不会漏清图标。
+
 ## [1.2.1] —— 2026-10-18 —— 修好 F4 的两处副作用
 
 v1.2.0 的「断肢接回」做得太草率，按一次 F4 会留下两个后遗症。这一版专门收尾。

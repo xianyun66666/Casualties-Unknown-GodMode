@@ -4,6 +4,40 @@ All notable changes to this mod. This project follows [Semantic Versioning](http
 
 ---
 
+## [1.2.2] — 2026-10-18 — the character no longer walks and jumps on its own
+
+v1.2.0's drug cleanup wrote a **non-neutral value into a field whose neutral value is 0**.
+The result: after pressing F4 the character moved at double speed under its own steam and
+jumped about twice as high, and it took 50 seconds to fade. This release fixes it.
+
+### Fixed: the character walks on its own and jumps higher than normal after F4
+
+The culprit is the **baseline value** of `Body.stimulantMultiplier`.
+
+Decompiling `Assembly-CSharp.dll`, this is how the game itself uses it:
+
+```csharp
+// Body::HandleVariableUpdates — decays toward 0 every frame, 0.02 per second
+stimulantMultiplier = Mathf.MoveTowards(stimulantMultiplier, 0f, Time.deltaTime * 0.02f);
+
+// Body::get_legSpeedMult — movement speed
+... * (1 + stimulantMultiplier) * ...
+
+// Body::get_actualMaxSpeed — top speed (jump height is derived from it)
+Mathf.Min(maxSpeed * (...) * (1 + stimulantMultiplier), ...)
+```
+
+In other words: **"clean" for this field is 0, not 1.** Speed is multiplied by
+`1 + stimulantMultiplier`, so writing `1` means `×2` — double movement speed and double
+jump. And because it only decays 0.02 per second, it takes **50 seconds** to return to
+normal, which looks exactly like "the character permanently walks on its own".
+
+v1.2.2 writes `0f` instead, with a comment in the source quoting the three decompiled
+facts above so this cannot regress silently.
+
+Also confirmed: `stimulantMultiplier` **drives no status icon** at all (`stimulated` reads
+`onHardStimulants`, `energized` reads `caffeinated`), so zeroing it hides nothing.
+
 ## [1.2.1] — 2026-10-18 — fix the two side effects of F4
 
 v1.2.0's "reattach severed limbs" was too rough — one press of F4 left two artefacts. This
