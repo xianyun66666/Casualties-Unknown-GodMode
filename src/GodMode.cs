@@ -109,7 +109,7 @@ using UnityEngine.UI;
 
 namespace CasualtiesGodMode
 {
-    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.0")]
+    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.1")]
     public class GodModePlugin : BaseUnityPlugin
     {
         internal static ManualLogSource L;
@@ -301,7 +301,7 @@ namespace CasualtiesGodMode
             StartWatchdog();
             StartHud();
 
-            L.LogInfo("[GodMode] 已加载 v1.2.0");
+            L.LogInfo("[GodMode] 已加载 v1.2.1");
             L.LogInfo("[GodMode] 按键: 上帝=" + KGod + " 飞行=" + KFly + " 技能=" + KSkill
                 + " 治疗=" + KHeal + " 传送=" + KTp + " 全亮=" + KLight + " 装备=" + KKit
                 + " 生成器=" + KSpawner + " 一击必杀=" + KOneHit);
@@ -1631,6 +1631,20 @@ namespace CasualtiesGodMode
                 {
                     Limb l = ls[i];
                     if (l == null) continue;      // Limb 是组件，被销毁时 == null 为真
+                    bool wasDis = l.dismembered;   // ★ 必须在清零之前读，下面靠它判断要不要做物理复位
+
+                    // ★ v1.2.1 白条修复：
+                    //   Limb.broken 在画面上不是「属性」，而是一根叫 BrokenBone 的骨头精灵
+                    //   （MakeBoneSprite() 用 Resources.Load<Sprite>("brokenBone") 生成、
+                    //     SetParent 挂在肢体下面），只有 MendBone() 会 Destroy 它。
+                    //   以前这里直接写 l.broken = false，等于把记录抹了、骨头却留在身上 ——
+                    //   屏幕上就多出一根白色棒子。所以必须「先让 MendBone() 删精灵，再清标志」。
+                    if (l.broken)
+                    {
+                        try { l.MendBone(); } catch { }
+                    }
+                    ClearBoneVisual(l);            // MendBone 只认 broken==true，这里再兜底扫一遍
+
                     l.skinHealth = V_MAX;
                     l.muscleHealth = V_MAX;
                     l.bleedAmount = 0f;
@@ -1639,19 +1653,106 @@ namespace CasualtiesGodMode
                     l.broken = false;
                     l.dislocated = false;
                     l.dismembered = false;
+
                     // ★ v1.2.0 关键修复：断肢以后不能再开枪
                     //   Limb.Dismember() 除了把 dismembered 置 true，还会对自己和所有下级肢体
                     //   调用 gameObject.SetActive(false) —— 整个手臂对象被停用。
                     //   以前这里只把 dismembered 改回 false，对象却一直是停用的，
                     //   于是「手臂能看见了但用不了枪 / 瞄不准 / 拿不起东西」。必须重新激活。
-                    try { if (!l.gameObject.activeSelf) l.gameObject.SetActive(true); }
-                    catch { }
+                    //
+                    // ★ v1.2.1 补充：光激活还不够。Dismember() 从来没动过 rb/joint，
+                    //   所以那个刚体是被「冻结」在停用前的位姿上的；一旦 SetActive(true)，
+                    //   它会带着陈旧的位置和速度直接砸回物理世界，铰链求解器拼命拉扯 ——
+                    //   表现就是「角色自己往前走、跳得比平时高」。所以激活前后要：
+                    //   先把刚体贴回铰链另一端（让铰链几乎不用拉），再清零速度，最后才开模拟。
+                    if (wasDis)
+                    {
+                        try
+                        {
+                            if (l.rb != null)
+                            {
+                                l.rb.simulated = false;
+                                l.rb.velocity = Vector2.zero;
+                                l.rb.angularVelocity = 0f;
+                            }
+                        }
+                        catch { }
+
+                        try { if (!l.gameObject.activeSelf) l.gameObject.SetActive(true); }
+                        catch { }
+
+                        try
+                        {
+                            if (l.rb != null)
+                            {
+                                Vector2 anchor = b.transform.position;
+                                if (l.joint != null && l.joint.connectedBody != null)
+                                    anchor = l.joint.connectedBody.transform.position;
+                                l.transform.position = new Vector3(anchor.x, anchor.y, l.transform.position.z);
+                                l.rb.velocity = Vector2.zero;
+                                l.rb.angularVelocity = 0f;
+                                l.rb.simulated = true;
+                            }
+                        }
+                        catch { }
+
+                        // 复位过程中给整个身体也刹一脚，免得人被这一下弹飞
+                        try
+                        {
+                            if (b.rb != null)
+                            {
+                                b.rb.velocity = Vector2.zero;
+                                b.rb.angularVelocity = 0f;
+                            }
+                        }
+                        catch { }
+                    }
                     SetF(l, "infected", false);
                     SetF(l, "splinted", false);
                     SetF(l, "strokeAffected", false);
                     SetF(l, "shrapnel", 0);
                 }
             }
+        }
+
+        // ------------------------------------------------------------------
+        //  清掉肢体上的「断骨」精灵（v1.2.1）
+        //  以前按 F4 清除状态之后角色旁边会多出一根白条，那根白条就是 BrokenBone：
+        //  Limb.MakeBoneSprite() 造出来的一个 SpriteRenderer 子物体，贴图取自
+        //  Resources.Load<Sprite>("brokenBone")，挂在肢体下面、sortingOrder 比肢体高 1。
+        //  唯一会销毁它的是 Limb.MendBone()，而 MendBone() 的第一行是 if (!broken) return;
+        //  —— 我们以前直接把 broken 写成 false，于是这根骨头永远删不掉。
+        //  这里两道保险：① 走反射把 brokenBoneObj 直接 Destroy；② 按名字扫子物体兜底
+        //  （万一 brokenBoneObj 字段已经丢了，名字还在）。
+        // ------------------------------------------------------------------
+        internal static void ClearBoneVisual(Limb l)
+        {
+            if (l == null) return;
+            try
+            {
+                FieldInfo fi = Fld(typeof(Limb), "brokenBoneObj");
+                if (fi != null)
+                {
+                    GameObject go = fi.GetValue(l) as GameObject;
+                    if (go != null)
+                    {
+                        UnityEngine.Object.Destroy(go);
+                        try { fi.SetValue(l, null); } catch { }
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                Transform t = l.transform;
+                for (int k = t.childCount - 1; k >= 0; k--)
+                {
+                    Transform c = t.GetChild(k);
+                    if (c != null && c.name != null && c.name.StartsWith("BrokenBone"))
+                        UnityEngine.Object.Destroy(c.gameObject);
+                }
+            }
+            catch { }
         }
 
         // ------------------------------------------------------------------
@@ -2923,6 +3024,7 @@ namespace CasualtiesGodMode
             MethodInfo preAdd = typeof(Patches).GetMethod("Pre_AddExp");
             MethodInfo preAttack = typeof(Patches).GetMethod("Pre_Attack");
             MethodInfo preCamInput = typeof(Patches).GetMethod("Pre_CamInput");
+            MethodInfo preDismember = typeof(Patches).GetMethod("Pre_Dismember");
 
             Hook("Body.HandleBody(每帧身体模拟)", typeof(Body), "HandleBody", preBody, postBody);
             Hook("Body.HandleCirculation(血液循环/脑死亡)", typeof(Body), "HandleCirculation", preCirc, null);
@@ -2955,6 +3057,9 @@ namespace CasualtiesGodMode
             // 也就是说「走动、瞄准、挥拳、开枪、用道具」全部收口在 HandleInput 这一个方法里。
             // 前缀返回 false 整个跳过，于是点菜单的时候角色不会跟着走、也不会顺手挥拳。
             Hook("PlayerCamera.HandleInput(菜单时冻结操作)", typeof(PlayerCamera), "HandleInput", preCamInput, null);
+
+            // 上帝模式开着时不让玩家肢体被砍断（v1.2.1）
+            Hook("Limb.Dismember(上帝模式下不被砍断)", typeof(Limb), "Dismember", preDismember, null);
         }
 
         static void Hook(string label, Type t, string name, MethodInfo pre, MethodInfo post)
@@ -3154,6 +3259,25 @@ namespace CasualtiesGodMode
                     GodModePlugin.L.LogWarning("[GodMode][一击必杀] 放大伤害失败: " + e.Message);
                 }
             }
+        }
+
+        // ---- 上帝模式开着时，玩家肢体不会被「砍断」（v1.2.1）----
+        // 依据：Limb.Dismember() 会对自己和所有下级肢体 gameObject.SetActive(false)，
+        // 而那个对象身上挂着拿东西的 InventorySlot —— 一旦被停用，游戏自己永远不会
+        // 再把它打开。所以哪怕事后把 dismembered 改回 false，手也拿不了枪。
+        // 与其事后补救，不如在上帝模式期间根本不让它发生。
+        public static bool Pre_Dismember(Limb __instance)
+        {
+            try
+            {
+                if (!GodModePlugin.GodOn) return true;             // 没开上帝模式就不干预正常玩法
+                if (__instance == null) return true;
+                Body b = null;
+                try { b = __instance.body; } catch { }
+                if (!GodModePlugin.IsPlayer(b)) return true;       // NPC 照常被砍断
+                return false;                                      // 玩家肢体：跳过整个 Dismember()
+            }
+            catch { return true; }
         }
 
         // ---- 窗口打开时冻结玩家操作（v1.2.0）----

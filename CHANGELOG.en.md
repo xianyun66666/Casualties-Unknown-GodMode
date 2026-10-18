@@ -4,6 +4,51 @@ All notable changes to this mod. This project follows [Semantic Versioning](http
 
 ---
 
+## [1.2.1] — 2026-10-18 — fix the two side effects of F4
+
+v1.2.0's "reattach severed limbs" was too rough — one press of F4 left two artefacts. This
+release cleans them up.
+
+### Fixed: a white bar appears next to the character after pressing F4
+
+The game draws a broken bone as a sprite called `BrokenBone`, created by
+`Limb.MakeBoneSprite()`, parented to the limb, and **only ever destroyed by
+`Limb.MendBone()`** — whose first line is `if (!broken) return;`.
+
+v1.2.0 wrote `l.broken = false` directly, which erased the flag but left the bone attached:
+a white bar on screen. Because `Dismember()` had deactivated the whole limb, the bone was
+hidden inside the inactive object, so it only popped out at the moment the limb was
+reactivated.
+
+Now the mod calls `MendBone()` first (letting it destroy the sprite) and only then clears
+the flags, plus a fallback that sweeps the limb's children for any leftover `BrokenBone`.
+
+### Fixed: the character walks by itself and jumps higher after pressing F4
+
+`Limb.Dismember()` never touches `rb` (`Rigidbody2D`) or `joint` (`HingeJoint2D`) — it only
+deactivates the GameObject. That rigidbody therefore stays frozen at the pose it had before
+deactivation; the moment v1.2.0 called `SetActive(true)`, it slammed back into the physics
+world with stale position and velocity, and the hinge solver yanked hard — the character
+gets dragged around and jumps higher than normal.
+
+Reactivating a limb now performs a physics reset in order:
+
+1. `simulated = false` to freeze the rigidbody;
+2. snap it onto the other end of the hinge (`joint.connectedBody`);
+3. zero velocity and angular velocity;
+4. `simulated = true` to resume simulation;
+5. brake the body's own rigidbody too, so the whole character isn't launched.
+
+### Added: limbs can no longer be severed while god mode is on
+
+Rather than patching things up afterwards, the mod now prevents it. A 17th hook,
+`Limb.Dismember(no severing in god mode)`, skips `Dismember()` for the player's limbs while
+god mode is enabled (NPCs are still dismembered normally, so regular gameplay is unchanged).
+
+The reason is the same one as before: once the limb object is deactivated, the
+`InventorySlot` attached to it is dead too — that is the root of "the arm is back but I
+can't use a gun".
+
 ## [1.2.0] — 2026-10-18 — dismemberment fix, drug cleanup, finer categories
 
 Two long-standing bugs that really hurt, plus a rebuilt spawn window that groups things
