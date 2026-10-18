@@ -115,10 +115,10 @@ WINEDLLOVERRIDES="winhttp=n,b" %command%
 Open `<game folder>\BepInEx\LogOutput.log` and search for `GodMode`. A healthy startup looks like:
 
 ```
-[Info   :BepInEx] Loading [GodMode 1.2.2]
+[Info   :BepInEx] Loading [GodMode 1.2.3]
 [Info   :GodMode] [GodMode] hooked: PlayerCamera.Update
 ...  (17 hook lines in total)
-[Info   :GodMode] [GodMode] loaded v1.2.2
+[Info   :GodMode] [GodMode] loaded v1.2.3
 [Info   :GodMode] [GodMode] watchdog started
 [Info   :GodMode] [GodMode][spawner] loaded: 284 items + ... entities + ... blocks = ... entries
 [Info   :GodMode] [GodMode][ui] uGUI window created, font = ...

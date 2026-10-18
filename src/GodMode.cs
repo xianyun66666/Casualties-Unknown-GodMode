@@ -109,7 +109,7 @@ using UnityEngine.UI;
 
 namespace CasualtiesGodMode
 {
-    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.2")]
+    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.3")]
     public class GodModePlugin : BaseUnityPlugin
     {
         internal static ManualLogSource L;
@@ -301,7 +301,7 @@ namespace CasualtiesGodMode
             StartWatchdog();
             StartHud();
 
-            L.LogInfo("[GodMode] 已加载 v1.2.2");
+            L.LogInfo("[GodMode] 已加载 v1.2.3");
             L.LogInfo("[GodMode] 按键: 上帝=" + KGod + " 飞行=" + KFly + " 技能=" + KSkill
                 + " 治疗=" + KHeal + " 传送=" + KTp + " 全亮=" + KLight + " 装备=" + KKit
                 + " 生成器=" + KSpawner + " 一击必杀=" + KOneHit);
@@ -354,6 +354,17 @@ namespace CasualtiesGodMode
             {
                 ScanKeys();
                 FreezePlayerIfNeeded();
+
+                // 「角色自己动」诊断采样：按完 F4 之后 3 秒内每 30 帧打一份状态快照
+                if (DiagLeft > 0)
+                {
+                    DiagLeft--;
+                    if (DiagLeft % 30 == 0)
+                    {
+                        Body pbd = PlayerBody();
+                        if (pbd != null) DiagSnapshot(pbd, "F4+" + (180 - DiagLeft) + "帧");
+                    }
+                }
 
                 // 正在改键时不要再触发功能热键：否则你把「上帝模式」改成 F1 的那一瞬间
                 // 就顺手开关了一次。身体/队列/界面这些每帧维护照常跑。
@@ -408,7 +419,10 @@ namespace CasualtiesGodMode
                     Body pb3 = PlayerBody();
                     if (pb3 != null)
                     {
+                        DiagSnapshot(pb3, "F4 之前");
                         RestoreBody(pb3);
+                        DiagSnapshot(pb3, "F4 之后");
+                        DiagLeft = 180;          // 之后 3 秒再采样 6 次，看角色是不是还在滑
                         RefreshMoodles();
                         Notify("已清除全部负面状态（治疗 + 情绪 + 中毒…）");
                     }
@@ -1620,8 +1634,18 @@ namespace CasualtiesGodMode
             SetF(b, "triedRollingLastStand", false);
             SetF(b, "succesfullyRolledLastStand", false);
             SetF(b, "specialCrying", false);
-            SetF(b, "temporarySlowdown", false);
-            SetF(b, "slowdownAmount", 0f);
+            SetF(b, "temporarySlowdown", 0f);
+            // ★★★ v1.2.3 关键修正：这里以前有 `SetF(b, "slowdownAmount", 0f);`，删掉了。
+            //   那是「按完 F4 角色自己一直走」的真正原因：
+            //   Body::FixedUpdate 里，玩家「不按键时」的唯一减速逻辑是
+            //       rb.velocity = new Vector2(rb.velocity.x * (1 - slowdownAmount * get_legSpeedMult()), rb.velocity.y)
+            //   全程序集里只有两处会写 slowdownAmount：
+            //       · Body prefab 里序列化的初始值（摩擦系数，正常玩法全靠它）
+            //       · CrystalKinetic::Touched —— 硬编码 `slowdownAmount = 0.5`（被动力水晶撞飞时的强减速）
+            //   ★ 没有任何代码会把它「恢复」回去。所以一旦写成 0：
+            //       摩擦系数 = 1 - 0 = 1 → 每一步都不减速 → 角色永远保持上一次的速度
+            //       表现为「松开按键还在自己往前滑、一直滑」，而且再按几次 F4 也好不了。
+            //   正确做法是**根本不碰这个字段**，让游戏的原始摩擦系数留着。
             SetF(b, "liquidSlipTime", 0f);
             SetF(b, "liquidRagdollBar", 0f);
             SetF(b, "overrideLookTime", 0f);
@@ -2161,6 +2185,45 @@ namespace CasualtiesGodMode
             FieldInfo f = Fld(o.GetType(), name);
             if (f == null) return;
             try { f.SetValue(o, v); }
+            catch { }
+        }
+
+        // ==================================================================
+        //  「角色自己动」一次性诊断（v1.2.3）
+        //
+        //  背景：v1.2.0~v1.2.2 连续三版都收到「按完 F4 角色会自己走」的反馈，前两次都猜错了原因
+        //  （先怪断肢物理、再怪兴奋剂倍率）。所以这一版直接在按下 F4 的前后各打一份运动状态快照，
+        //  之后 3 秒里每 30 帧再补一份，把「输入轴 / moveDir / 刚体速度 / 摩擦系数 / 地面状态」
+        //  全部落进日志 —— 这样即使还有残留问题，也能一眼看出是哪一项没归位，不用再猜。
+        //
+        //  正常期望：松开按键时 axis=0、moveDir=0,0、v.x 迅速衰减到 0；
+        //            slowdownAmount 应该是游戏 prefab 里的原始值（不是 0）。
+        // ==================================================================
+        internal static int DiagLeft = 0;
+
+        internal static void DiagSnapshot(Body b, string tag)
+        {
+            if (b == null) return;
+            try
+            {
+                float vx = 0f, vy = 0f;
+                try { if (b.rb != null) { vx = b.rb.velocity.x; vy = b.rb.velocity.y; } } catch { }
+                float ax = 0f, ay = 0f;
+                try { ax = Input.GetAxisRaw("Horizontal"); ay = Input.GetAxisRaw("Vertical"); } catch { }
+
+                L.LogInfo("[GodMode][诊断] " + tag
+                    + " 轴=" + ax.ToString("0.00") + "/" + ay.ToString("0.00")
+                    + " moveDir=" + b.moveDir.x.ToString("0.000") + "," + b.moveDir.y.ToString("0.000")
+                    + " 速度=" + vx.ToString("0.000") + "," + vy.ToString("0.000")
+                    + " 落地=" + (GetF(b, "grounded") ?? "?")
+                    + " 打滑=" + (GetF(b, "slippery") ?? "?")
+                    + " ★摩擦=" + (GetF(b, "slowdownAmount") ?? "?")
+                    + " 临时减速=" + (GetF(b, "temporarySlowdown") ?? "?")
+                    + " 兴奋剂=" + (GetF(b, "stimulantMultiplier") ?? "?")
+                    + " 体力=" + (GetF(b, "stamina") ?? "?")
+                    + " 精力=" + (GetF(b, "energy") ?? "?")
+                    + " 双腿没了=" + (GetF(b, "bothLegsAmputated") ?? "?"));
+            }
             catch { }
         }
 

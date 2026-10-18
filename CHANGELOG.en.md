@@ -4,6 +4,52 @@ All notable changes to this mod. This project follows [Semantic Versioning](http
 
 ---
 
+## [1.2.3] — 2026-10-18 — the character really stops walking on its own now
+
+v1.2.2 fixed the "jumps too high" half (the stimulant multiplier) but **not** the "walks on its
+own" half. This release fixes the latter and adds a diagnostic log so we stop guessing.
+
+### Fixed: after pressing F4 the character keeps sliding even with no keys held
+
+The culprit is a line I added to `RestoreBody()` in v1.2.0:
+
+```csharp
+SetF(b, "slowdownAmount", 0f);   // ← removed
+```
+
+`slowdownAmount` is the **friction coefficient**. The only deceleration the game applies when
+the player is *not* pressing anything lives in `Body::FixedUpdate`:
+
+```csharp
+// with no input, every physics step multiplies horizontal speed by this
+rb.velocity = new Vector2(rb.velocity.x * (1 - slowdownAmount * get_legSpeedMult()), rb.velocity.y);
+```
+
+Only two places in the whole assembly write that field:
+
+- **the value serialized on the Body prefab** — ordinary ground friction depends entirely on it
+- `CrystalKinetic::Touched` — hardcodes `slowdownAmount = 0.5f` (the violent slowdown when a
+  kinetic crystal knocks you away)
+
+**Nothing ever restores it.** So writing `0` turns the friction factor into `1 - 0 = 1`: no
+deceleration at all, and the character keeps whatever speed it last had — it slides on after you
+release the keys, forever, and pressing F4 again does not help (writing 0 over 0 is a no-op).
+
+v1.2.3 simply **stops touching that field**, leaving the game's own friction value alone.
+
+### Added: a one-shot movement diagnostic
+
+Since the previous two attempts both guessed wrong, pressing F4 now logs a movement snapshot
+before and after, then six more over the next three seconds:
+
+```
+[GodMode][诊断] F4 之后 轴=0.00/0.00 moveDir=0.000,0.000 速度=0.000,0.000
+                落地=True 打滑=False ★摩擦=0.25 临时减速=0 兴奋剂=0 体力=100 精力=100 双腿没了=False
+```
+
+The `★摩擦` field is `slowdownAmount`; in normal play it should hold the prefab's original value
+(not 0). That log makes this class of bug a one-glance diagnosis next time.
+
 ## [1.2.2] — 2026-10-18 — the character no longer walks and jumps on its own
 
 v1.2.0's drug cleanup wrote a **non-neutral value into a field whose neutral value is 0**.
