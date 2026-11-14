@@ -1,11 +1,22 @@
 // ============================================================================
-//  Casualties Unknown (Demo) - 上帝模式 God Mode   v1.2.0
-//  运行环境: BepInEx 5.4.23.4 / Unity 2022.3.62 / Mono
+//  Casualties Unknown (Demo) - 上帝模式 God Mode   v2.0.0
+//  运行环境: BepInEx 5.4.23.5 / Unity 2022.3.62 / Mono
 //  编译约束: 用 .NET Framework 自带 csc.exe => 只能 C# 5 语法
 //            (禁用 ?. / 字符串插值 / 表达式体成员 / nameof)
 //  逆向依据: Body/Limb 构造函数中的满值常量, ConsoleScript 的 noclip 实现
 //
-//  版本说明: v1.2.0 = 修断肢后无法开枪 + 药物后遗清干净 + 菜单细分 + 菜单时冻结操作.
+//  v2.0.0 变更（创造模式界面）:
+//    * 生成器改成 Minecraft 创造模式那样的图标网格：9x5 = 45 格一页，每格显示真实图标。
+//      方块图标取自 WorldGeneration.tiles（tileset 的 Tile.sprite），物品/实体图标取自
+//      prefab 上的 SpriteRenderer.sprite —— 游戏没有任何图标注册表，只能这样硬取。
+//    * 支持「拖出」：按住图标往世界里拖，松手就生成在鼠标落点的那个格子上（以前只能
+//      生成在固定位置）。在面板上松手则仍生成在当前放置点。
+//    * 界面现代化：圆角九宫格 Sprite（运行时逐像素生成，不依赖美术资源）、深色半透明
+//      面板、顶部强调色条、hover 蓝边 / 选中绿边、拖动时跟随鼠标的半透明幽灵图标。
+//    * 列表模式保留：分类总览、键位设置仍然用原来的行列表。
+//
+//  版本说明: v1.8.0 = 生成器补全（扫描运行时对象）+ 所有游戏版本通用.
+//            v1.2.0 = 修断肢后无法开枪 + 药物后遗清干净 + 菜单细分 + 菜单时冻结操作.
 //            v1.1.0 = 一击必杀(F9) + 窗口内可改键位.
 //            v1.0.0 = 首个公开发布版, 内容等于下面的内部迭代 0.9.0.
 //            下文 v0.7.0 / v0.8.0 / v0.9.0 是发布前的内部迭代记录, 保留供追溯.
@@ -105,11 +116,12 @@ using BepInEx.Logging;
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Tilemaps;
 using UnityEngine.UI;
 
 namespace CasualtiesGodMode
 {
-    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.8.0")]
+    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "2.0.0")]
     public class GodModePlugin : BaseUnityPlugin
     {
         internal static ManualLogSource L;
@@ -312,7 +324,7 @@ namespace CasualtiesGodMode
             }
             catch { }
 
-            L.LogInfo("[GodMode] 已加载 v1.8.0");
+            L.LogInfo("[GodMode] 已加载 v2.0.0（创造模式界面）");
             L.LogInfo("[GodMode] 按键: 上帝=" + KGod + " 飞行=" + KFly + " 技能=" + KSkill
                 + " 治疗=" + KHeal + " 传送=" + KTp + " 全亮=" + KLight + " 装备=" + KKit
                 + " 生成器=" + KSpawner + " 一击必杀=" + KOneHit);
@@ -470,7 +482,13 @@ namespace CasualtiesGodMode
                         BuildUi();
                         UiKeyMode = false;      // 每次打开都从生成列表开始，不留在键位页
                         UiKeySel = -1;
-                        UiCatMode = true;       // v1.2.0：先看「分类总览」，避免一开窗就是几百条
+                        // v2.0.0：一开窗直接进「创造模式网格」，全部物品铺成 9x5 图标；
+                        // 想看分类总览就点中间那个分类标签（原来的分类列表还在）
+                        UiCatMode = false;
+                        SpawnCat = "全部";
+                        UiPage = 0;
+                        UiSel = 0;
+                        UiClampPage();
                         // 第一次打开时把生成点默认设在角色脚下，这样「自己选的点」模式不会指到 (0,0)
                         if (!SpawnAnchorSet) SetAnchorFromPlayer();
                         UiSetVisible(true);
@@ -781,6 +799,293 @@ namespace CasualtiesGodMode
             UiBtnList.Add(b);
         }
 
+        // ==================================================================
+        //  v2.0.0 「创造模式」图标网格
+        //
+        //  为什么改成网格 + 拖动：
+        //    原来是一列一列的文字，几百种东西翻页翻到手酸；而且「点一下 = 直接生成到
+        //    某个你看不见的坐标」完全不符合直觉。现在照 Minecraft 创造模式的做法：
+        //    上面搜索、左边分类、中间一格一格的图标，按住图标拖进世界、松手就落在
+        //    鼠标指的地方。
+        //
+        //  图标从哪来（游戏没有任何 icon 字段，别再找了）：
+        //    * 方块     -> WorldGeneration.tiles[blockId] as Tile -> .sprite（tileset 本体）
+        //    * 实体/物品 -> prefab 上第一个 SpriteRenderer.sprite
+        //    * 都没有   -> 不显示图标，只留名字（不会留空框）
+        // ==================================================================
+
+        internal const int GRID_COLS = 9;
+        internal const int GRID_ROWS = 5;
+        internal const int CELLS_PER_PAGE = GRID_COLS * GRID_ROWS;
+        internal const float CELL_W = 96f;
+        internal const float CELL_H = 104f;
+
+        internal class UiCell
+        {
+            public RectTransform Rt;
+            public Image Frame;
+            public Image Bg;
+            public Image Icon;
+            public TextMeshProUGUI Name;
+            public int Row = -1;
+        }
+
+        internal static readonly List<UiCell> UiCells = new List<UiCell>();
+        internal static RectTransform UiGridRt;
+        internal static Image UiGhost;                 // 拖动时跟着鼠标的那张图
+        internal static int UiDragRow = -1;            // 正在拖的清单索引
+        internal static bool UiDragArmed = false;
+        internal static Sprite SprCell;
+        internal static Sprite SprPanel;
+        internal static readonly Dictionary<int, Sprite> IconCache = new Dictionary<int, Sprite>();
+        internal static readonly Dictionary<int, Sprite> BlockIconCache = new Dictionary<int, Sprite>();
+        internal static bool BlockIconReady = false;
+
+        // 生成一张圆角九宫格贴图（面板/格子/按钮共用，靠 Image.color 染色）
+        internal static Sprite MakeRoundSprite(int size, int radius)
+        {
+            try
+            {
+                Texture2D t = new Texture2D(size, size, TextureFormat.RGBA32, false);
+                t.hideFlags = HideFlags.HideAndDontSave;
+                t.filterMode = FilterMode.Bilinear;
+                t.wrapMode = TextureWrapMode.Clamp;
+                Color32[] px = new Color32[size * size];
+                float r = radius;
+                for (int y = 0; y < size; y++)
+                {
+                    for (int x = 0; x < size; x++)
+                    {
+                        float dx = 0f, dy = 0f;
+                        if (x < r) dx = r - x - 0.5f;
+                        else if (x > size - r - 1) dx = x - (size - r) + 0.5f;
+                        if (y < r) dy = r - y - 0.5f;
+                        else if (y > size - r - 1) dy = y - (size - r) + 0.5f;
+                        float d = Mathf.Sqrt(dx * dx + dy * dy);
+                        float a = Mathf.Clamp01(r - d + 0.5f);
+                        px[y * size + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+                    }
+                }
+                t.SetPixels32(px);
+                t.Apply();
+                return Sprite.Create(t, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 100f, 0,
+                    SpriteMeshType.FullRect, new Vector4(radius, radius, radius, radius));
+            }
+            catch { return null; }
+        }
+
+        internal static Image NewImage(string name, Transform parent, Sprite sp, Color col, bool sliced)
+        {
+            RectTransform rt = NewRect(name, parent);
+            Image im = rt.gameObject.AddComponent<Image>();
+            im.raycastTarget = false;
+            if (sp != null)
+            {
+                im.sprite = sp;
+                if (sliced) im.type = Image.Type.Sliced;
+            }
+            im.color = col;
+            return im;
+        }
+
+        internal static Sprite PrefabIcon(GameObject go)
+        {
+            if (go == null) return null;
+            try
+            {
+                SpriteRenderer sr = go.GetComponentInChildren<SpriteRenderer>(true);
+                if (sr != null && sr.sprite != null) return sr.sprite;
+            }
+            catch { }
+            return null;
+        }
+
+        // 方块图标：tileset 里按方块 id 直接取
+        internal static void ScanBlockIcons()
+        {
+            if (BlockIconReady) return;
+            BlockIconReady = true;
+            try
+            {
+                WorldGeneration w = WorldGeneration.world;
+                if (w == null) { BlockIconReady = false; return; }
+                Array tiles = GetF(w, "tiles") as Array;
+                if (tiles == null) return;
+                for (int id = 0; id < tiles.Length; id++)
+                {
+                    object tb = null;
+                    try { tb = tiles.GetValue(id); } catch { tb = null; }
+                    if (tb == null) continue;
+                    Sprite sp = null;
+                    try
+                    {
+                        Tile tile = tb as Tile;
+                        if (tile != null) sp = tile.sprite;
+                    }
+                    catch { }
+                    if (sp != null) BlockIconCache[id] = sp;
+                }
+                if (L != null) L.LogInfo("[GodMode][界面] 方块图标取自 tileset：" + BlockIconCache.Count + " 个");
+            }
+            catch { }
+        }
+
+        internal static Sprite IconFor(int k)
+        {
+            Sprite s;
+            if (IconCache.TryGetValue(k, out s)) return s;
+            s = null;
+            try
+            {
+                if (k < 0 || k >= SpawnKinds.Count) return null;
+                if (SpawnKinds[k] == K_BLOCK)
+                {
+                    ScanBlockIcons();
+                    if (!BlockIconCache.TryGetValue(SpawnBlocks[k], out s)) s = null;
+                }
+                else
+                {
+                    if (k < SpawnObjs.Count) s = PrefabIcon(SpawnObjs[k]);
+                    if (s == null && SpawnKinds[k] == K_ITEM)
+                    {
+                        try
+                        {
+                            GameObject g = Resources.Load<GameObject>(SpawnIds[k]);
+                            s = PrefabIcon(g);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            IconCache[k] = s;
+            return s;
+        }
+
+        internal static void BuildGrid(float top)
+        {
+            try
+            {
+                if (SprCell == null) SprCell = MakeRoundSprite(48, 12);
+                if (SprPanel == null) SprPanel = MakeRoundSprite(96, 22);
+
+                UiGridRt = NewRect("Grid", UiPanel);
+                UiGridRt.sizeDelta = new Vector2(GRID_COLS * CELL_W, GRID_ROWS * CELL_H);
+                UiGridRt.anchoredPosition = new Vector2(10f, -top);
+
+                for (int r = 0; r < GRID_ROWS; r++)
+                {
+                    for (int c = 0; c < GRID_COLS; c++)
+                    {
+                        RectTransform cell = NewRect("Cell" + r + "_" + c, UiGridRt);
+                        cell.sizeDelta = new Vector2(CELL_W - 4f, CELL_H - 4f);
+                        cell.anchoredPosition = new Vector2(c * CELL_W + 2f, -(r * CELL_H + 2f));
+
+                        UiCell u = new UiCell();
+                        u.Rt = cell;
+
+                        u.Frame = NewImage("Frame", cell, SprCell, new Color(1f, 1f, 1f, 0.06f), true);
+                        Fill(u.Frame.rectTransform, 0f, 0f);
+
+                        u.Bg = NewImage("Bg", cell, SprCell, new Color(0.10f, 0.11f, 0.16f, 0.98f), true);
+                        Fill(u.Bg.rectTransform, 2f, 2f);
+
+                        u.Icon = NewImage("Icon", cell, null, Color.white, false);
+                        u.Icon.preserveAspect = true;
+                        u.Icon.rectTransform.anchorMin = new Vector2(0.5f, 1f);
+                        u.Icon.rectTransform.anchorMax = new Vector2(0.5f, 1f);
+                        u.Icon.rectTransform.pivot = new Vector2(0.5f, 1f);
+                        u.Icon.rectTransform.sizeDelta = new Vector2(46f, 46f);
+                        u.Icon.rectTransform.anchoredPosition = new Vector2(0f, -8f);
+
+                        u.Name = NewText("Nm", cell, 11, new Color(0.86f, 0.89f, 0.96f, 1f), TextAlignmentOptions.Top);
+                        u.Name.rectTransform.anchorMin = new Vector2(0f, 1f);
+                        u.Name.rectTransform.anchorMax = new Vector2(1f, 1f);
+                        u.Name.rectTransform.pivot = new Vector2(0.5f, 1f);
+                        u.Name.rectTransform.sizeDelta = new Vector2(-6f, 36f);
+                        u.Name.rectTransform.anchoredPosition = new Vector2(0f, -58f);
+                        try { u.Name.enableWordWrapping = true; } catch { }
+                        try { u.Name.overflowMode = TextOverflowModes.Ellipsis; } catch { }
+
+                        UiCells.Add(u);
+                    }
+                }
+
+                UiGhost = NewImage("Ghost", UiRoot.transform, null, new Color(1f, 1f, 1f, 0.92f), false);
+                UiGhost.preserveAspect = true;
+                UiGhost.rectTransform.anchorMin = new Vector2(0f, 0f);
+                UiGhost.rectTransform.anchorMax = new Vector2(0f, 0f);
+                UiGhost.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+                UiGhost.rectTransform.sizeDelta = new Vector2(64f, 64f);
+                UiGhost.gameObject.SetActive(false);
+            }
+            catch (Exception e)
+            {
+                if (L != null) L.LogError("[GodMode][界面] 建网格失败: " + e);
+            }
+        }
+
+        internal static void ShowGhost(int row)
+        {
+            try
+            {
+                Sprite s = IconFor(row);
+                if (UiGhost == null) return;
+                if (s == null) { UiGhost.gameObject.SetActive(false); return; }
+                UiGhost.sprite = s;
+                UiGhost.gameObject.SetActive(true);
+                Vector2 mp = Input.mousePosition;
+                UiGhost.rectTransform.anchoredPosition = new Vector2(mp.x, mp.y);
+            }
+            catch { }
+        }
+
+        internal static void HideGhost()
+        {
+            try { if (UiGhost != null) UiGhost.gameObject.SetActive(false); }
+            catch { }
+        }
+
+        internal static void DrawGrid()
+        {
+            for (int i = 0; i < UiCells.Count; i++)
+            {
+                UiCell c = UiCells[i];
+                int idx = UiPage * CELLS_PER_PAGE + i;
+                if (idx >= UiShown.Count)
+                {
+                    if (c.Rt.gameObject.activeSelf) c.Rt.gameObject.SetActive(false);
+                    continue;
+                }
+                if (!c.Rt.gameObject.activeSelf) c.Rt.gameObject.SetActive(true);
+
+                int k = UiShown[idx];
+                c.Row = k;
+                c.Name.text = SpawnNames[k];
+
+                Sprite s = IconFor(k);
+                if (s != null)
+                {
+                    c.Icon.sprite = s;
+                    c.Icon.color = Color.white;
+                    c.Icon.enabled = true;
+                }
+                else c.Icon.enabled = false;
+
+                bool hov = (i == UiHover);
+                bool sel = (i == UiSel);
+                if (c.Bg != null)
+                    c.Bg.color = hov ? new Color(0.23f, 0.27f, 0.40f, 0.99f)
+                               : sel ? new Color(0.15f, 0.25f, 0.21f, 0.99f)
+                               : new Color(0.10f, 0.11f, 0.16f, 0.98f);
+                if (c.Frame != null)
+                    c.Frame.color = hov ? new Color(0.45f, 0.62f, 1f, 0.95f)
+                                  : sel ? new Color(0.35f, 0.82f, 0.55f, 0.95f)
+                                  : new Color(1f, 1f, 1f, 0.055f);
+                c.Name.color = hov ? Color.white : new Color(0.86f, 0.89f, 0.96f, 1f);
+            }
+        }
+
         internal static void BuildUi()
         {
             if (UiBuilt || UiFailed) return;
@@ -807,14 +1112,28 @@ namespace CasualtiesGodMode
                 UiStatus.rectTransform.sizeDelta = new Vector2(900f, 30f);
                 UiStatus.rectTransform.anchoredPosition = new Vector2(16f, -8f);
 
-                // 主面板
+                // 主面板（v2.0.0：圆角 + 细描边 + 顶部强调色条）
+                if (SprPanel == null) SprPanel = MakeRoundSprite(96, 22);
+                if (SprCell == null) SprCell = MakeRoundSprite(48, 12);
+
                 UiPanel = NewRect("Panel", go.transform);
                 Image pbg = UiPanel.gameObject.AddComponent<Image>();
                 pbg.raycastTarget = false;
-                pbg.color = new Color(0.05f, 0.06f, 0.09f, 0.95f);
-                float ph = Mathf.Min(UI_LIST_TOP + UI_ROWS * UI_ROW_H + 56f, Screen.height - 40f);
+                pbg.sprite = SprPanel;
+                pbg.type = Image.Type.Sliced;
+                pbg.color = new Color(0.055f, 0.062f, 0.085f, 0.97f);
+                float ph = Mathf.Min(UI_LIST_TOP + GRID_ROWS * CELL_H + 58f, Screen.height - 40f);
                 UiPanel.sizeDelta = new Vector2(UI_PANEL_W, ph);
                 UiPanel.anchoredPosition = new Vector2(40f, -40f);
+
+                // 顶部强调色条
+                Image bar = NewImage("Accent", UiPanel, SprCell,
+                    new Color(0.42f, 0.55f, 1f, 0.85f), true);
+                bar.rectTransform.anchorMin = new Vector2(0f, 1f);
+                bar.rectTransform.anchorMax = new Vector2(1f, 1f);
+                bar.rectTransform.pivot = new Vector2(0.5f, 1f);
+                bar.rectTransform.sizeDelta = new Vector2(-24f, 3f);
+                bar.rectTransform.anchoredPosition = new Vector2(0f, -1f);
 
                 UiTitle = NewText("Title", UiPanel, 21, new Color(1f, 0.9f, 0.45f, 1f), TextAlignmentOptions.TopLeft);
                 UiTitle.rectTransform.sizeDelta = new Vector2(UI_PANEL_W - 20f, 32f);
@@ -901,9 +1220,12 @@ namespace CasualtiesGodMode
                     UiRowList.Add(u);
                 }
 
+                // v2.0.0：图标网格（列表页仍然沿用上面那 16 行）
+                BuildGrid(UI_LIST_TOP);
+
                 UiHint = NewText("Hint", UiPanel, 14, new Color(0.62f, 0.68f, 0.78f, 1f), TextAlignmentOptions.TopLeft);
                 UiHint.rectTransform.sizeDelta = new Vector2(UI_PANEL_W - 20f, 46f);
-                UiHint.rectTransform.anchoredPosition = new Vector2(10f, -(UI_LIST_TOP + UI_ROWS * UI_ROW_H + 4f));
+                UiHint.rectTransform.anchoredPosition = new Vector2(10f, -(UI_LIST_TOP + GRID_ROWS * CELL_H + 4f));
 
                 UiPanel.gameObject.SetActive(false);
                 UiBuilt = true;
@@ -956,11 +1278,23 @@ namespace CasualtiesGodMode
             return UiCatMode ? UiCatList.Count : UiShown.Count;
         }
 
+        // v2.0.0：网格模式下每页 9x5=45 格，列表模式（分类总览/键位页）每页 16 行
+        internal static bool UiGridMode()
+        {
+            return !UiCatMode && !UiKeyMode;
+        }
+
+        internal static int UiPerPage()
+        {
+            return UiGridMode() ? CELLS_PER_PAGE : UI_ROWS;
+        }
+
         internal static int UiPageCount()
         {
             int n = UiListCount();
             if (n <= 0) return 1;
-            return (n + UI_ROWS - 1) / UI_ROWS;
+            int per = UiPerPage();
+            return (n + per - 1) / per;
         }
 
         internal static void UiClampPage()
@@ -968,8 +1302,9 @@ namespace CasualtiesGodMode
             int pc = UiPageCount();
             if (UiPage < 0) UiPage = 0;
             if (UiPage > pc - 1) UiPage = pc - 1;
+            int per = UiPerPage();
             if (UiSel < 0) UiSel = 0;
-            if (UiSel > UI_ROWS - 1) UiSel = UI_ROWS - 1;
+            if (UiSel > per - 1) UiSel = per - 1;
         }
 
         internal static void UiRebuildShown()
@@ -1045,7 +1380,7 @@ namespace CasualtiesGodMode
 
         internal static void SpawnRow(int row)
         {
-            int idx = UiPage * UI_ROWS + row;
+            int idx = UiPage * UiPerPage() + row;
             if (idx < 0 || idx >= UiShown.Count) return;
             int i = UiShown[idx];
             SpawnQueue.Clear();
@@ -1064,6 +1399,21 @@ namespace CasualtiesGodMode
             }
         }
 
+        // v2.0.0：把图标拖到世界里松手 —— 生成在鼠标所指的那个格子
+        internal static void SpawnDropAt(int row, Vector2 mp)
+        {
+            try { AimAtScreen(mp); }
+            catch { }
+            Vector2 p = ClampToWorld(SpawnAnchor);
+            if (SpawnOne(row, p))
+            {
+                Notify("已拖出：" + SpawnNames[row] + " @ " + Mathf.RoundToInt(p.x) + "," + Mathf.RoundToInt(p.y));
+                if (L != null) L.LogInfo("[GodMode][生成器] 拖出 " + SpawnIds[row] + "（" + SpawnNames[row] + "）@ "
+                    + Mathf.RoundToInt(p.x) + "," + Mathf.RoundToInt(p.y));
+            }
+            else Notify("生成失败：" + SpawnNames[row]);
+        }
+
         internal static void DoAction(int act)
         {
             if (IsGroupAct(act))
@@ -1072,7 +1422,7 @@ namespace CasualtiesGodMode
                 SpawnCat = "全部";
                 UiPage = 0;
                 UiSel = 0;
-                UiCatMode = true;          // v1.2.0：点大分类先进「分类总览」，不再一上来就甩出几百条
+                UiCatMode = false;         // v2.0.0：大分类之间直接切网格，不再插一层分类总览
                 UiShownDirty = true;
                 UiShownStamp = -1;
                 return;
@@ -1215,25 +1565,82 @@ namespace CasualtiesGodMode
                 }
             }
 
-            UiHover = -1;
-            for (int i = 0; i < UiRowList.Count; i++)
+            if (UiGridMode())
             {
-                int idx = UiPage * UI_ROWS + i;
-                if (idx >= UiListCount()) break;
-                if (RectTransformUtility.RectangleContainsScreenPoint(UiRowList[i].Rt, mp, null))
+                // ---- 图标网格：悬停 / 按下开始拖 / 松手生成 ----
+                UiHover = -1;
+                for (int i = 0; i < UiCells.Count; i++)
                 {
-                    UiHover = i;
-                    break;
+                    if (!UiCells[i].Rt.gameObject.activeSelf) continue;
+                    if (RectTransformUtility.RectangleContainsScreenPoint(UiCells[i].Rt, mp, null)) { UiHover = i; break; }
+                }
+
+                if (Input.GetMouseButtonDown(0))
+                {
+                    if (UiHover >= 0)
+                    {
+                        UiSel = UiHover;
+                        int idx = UiPage * CELLS_PER_PAGE + UiHover;
+                        if (idx < UiShown.Count)
+                        {
+                            UiDragRow = UiShown[idx];
+                            UiDragArmed = true;
+                            ShowGhost(UiDragRow);
+                        }
+                        return;
+                    }
+                    for (int i = 0; i < UiBtnList.Count; i++)
+                    {
+                        if (RectTransformUtility.RectangleContainsScreenPoint(UiBtnList[i].Rt, mp, null))
+                        {
+                            DoAction(UiBtnList[i].Act);
+                            return;
+                        }
+                    }
+                }
+
+                if (UiDragArmed)
+                {
+                    if (UiGhost != null) UiGhost.rectTransform.anchoredPosition = new Vector2(mp.x, mp.y);
+                    if (Input.GetMouseButtonUp(0))
+                    {
+                        bool overPanel = false;
+                        try { overPanel = (UiPanel != null) && RectTransformUtility.RectangleContainsScreenPoint(UiPanel, mp, null); }
+                        catch { overPanel = false; }
+                        int row = UiDragRow;
+                        UiDragArmed = false;
+                        UiDragRow = -1;
+                        HideGhost();
+                        if (row >= 0)
+                        {
+                            if (overPanel) SpawnRow(UiSel);          // 在面板上松手 = 照旧生成
+                            else SpawnDropAt(row, mp);               // 拖到世界里松手 = 生成在鼠标落点
+                        }
+                    }
+                    return;
+                }
+            }
+            else
+            {
+                UiHover = -1;
+                for (int i = 0; i < UiRowList.Count; i++)
+                {
+                    int idx = UiPage * UI_ROWS + i;
+                    if (idx >= UiListCount()) break;
+                    if (RectTransformUtility.RectangleContainsScreenPoint(UiRowList[i].Rt, mp, null))
+                    {
+                        UiHover = i;
+                        break;
+                    }
                 }
             }
 
-            if (Input.GetMouseButtonDown(0))
+            if (!UiGridMode() && Input.GetMouseButtonDown(0))
             {
                 if (UiHover >= 0)
                 {
                     UiSel = UiHover;
-                    if (UiCatMode) PickCatRow(UiHover);   // 分类总览：点一下 = 进这个分类
-                    else SpawnRow(UiHover);
+                    PickCatRow(UiHover);   // 分类总览：点一下 = 进这个分类
                     return;
                 }
                 for (int i = 0; i < UiBtnList.Count; i++)
@@ -1246,9 +1653,16 @@ namespace CasualtiesGodMode
                 }
             }
 
-            float wheel = Input.mouseScrollDelta.y;
-            if (wheel > 0.01f) { UiPage--; UiClampPage(); }
-            else if (wheel < -0.01f) { UiPage++; UiClampPage(); }
+            // 滚轮只在鼠标位于面板内时才翻页（否则在游戏里随便滚都会把生成器翻页）
+            bool wheelOverPanel = false;
+            try { wheelOverPanel = (UiPanel != null) && RectTransformUtility.RectangleContainsScreenPoint(UiPanel, mp, null); }
+            catch { wheelOverPanel = false; }
+            if (wheelOverPanel)
+            {
+                float wheel = Input.mouseScrollDelta.y;
+                if (wheel > 0.01f) { UiPage--; UiClampPage(); }
+                else if (wheel < -0.01f) { UiPage++; UiClampPage(); }
+            }
 
             if (Input.GetKeyDown(KeyCode.Escape))
             {
@@ -1396,10 +1810,18 @@ namespace CasualtiesGodMode
                             + "   拾取: " + (pk ? "开" : "关") + q;
                 }
 
+                bool grid = UiGridMode();
                 for (int i = 0; i < UiRowList.Count; i++)
                 {
-                    int idx = UiPage * UI_ROWS + i;
                     UiRow u = UiRowList[i];
+                    if (grid)
+                    {
+                        if (u.Rt.gameObject.activeSelf) u.Rt.gameObject.SetActive(false);
+                        continue;
+                    }
+                    if (!u.Rt.gameObject.activeSelf) u.Rt.gameObject.SetActive(true);
+
+                    int idx = UiPage * UI_ROWS + i;
                     int total = UiListCount();
                     if (idx >= total)
                     {
@@ -1430,6 +1852,15 @@ namespace CasualtiesGodMode
                     u.Tx.color = (i == UiHover) ? Color.white : new Color(0.90f, 0.93f, 1f, 1f);
                 }
 
+                if (grid) DrawGrid();
+                else
+                {
+                    for (int i = 0; i < UiCells.Count; i++)
+                    {
+                        if (UiCells[i].Rt.gameObject.activeSelf) UiCells[i].Rt.gameObject.SetActive(false);
+                    }
+                }
+
                 RefreshBtnLabels(cond, pk);
 
                 if (UiHint != null)
@@ -1437,6 +1868,9 @@ namespace CasualtiesGodMode
                     if (UiCatMode)
                         UiHint.text = "点一行 = 进这个分类    滚轮/PageUp/PageDown = 翻页    ↑↓ + 回车 = 进分类\n"
                             + "第一排切换大分类    Backspace 或点上面的绿色标签 = 返回列表    / 搜索    Esc 关窗口    F8 开关";
+                    else if (grid)
+                        UiHint.text = "★ 按住图标拖到世界里松手 = 生成在鼠标指的地方（在面板上松手 = 生成在当前位置）    左键单击 = 直接生成\n"
+                            + "滚轮/PageUp/PageDown 翻页    / 搜索    ◀▶/Tab 切分类    点中间的分类标签看全部分类    Esc 关     F8 开关";
                     else
                         UiHint.text = "鼠标左键点一行 = 生成    滚轮/PageUp/PageDown = 翻页    ↑↓ 选中 + 回车 = 生成\n"
                             + "第一排切换大分类    ◀▶/Tab 切子分类    点中间那个子分类标签 = 看全部分类    「选点」后点世界 = 指定生成点    / 搜索    Esc 关窗口    F8 开关";
