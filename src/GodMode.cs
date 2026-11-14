@@ -109,7 +109,7 @@ using UnityEngine.UI;
 
 namespace CasualtiesGodMode
 {
-    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.2.0")]
+    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.8.0")]
     public class GodModePlugin : BaseUnityPlugin
     {
         internal static ManualLogSource L;
@@ -301,7 +301,18 @@ namespace CasualtiesGodMode
             StartWatchdog();
             StartHud();
 
-            L.LogInfo("[GodMode] 已加载 v1.2.0");
+            // 版本通用：把游戏版本记下来，出问题时能一眼看出是哪个版本。
+            // 本插件的所有钩子都是「找不到就跳过」，所有游戏字段都是反射读写、取不到就忽略，
+            // 因此游戏小版本更新时不会整个插件失效，最多少几个功能。
+            try
+            {
+                L.LogInfo("[GodMode] 游戏版本 = " + Application.version
+                    + "  Unity = " + Application.unityVersion
+                    + "  BepInEx = " + typeof(BepInEx.BepInPlugin).Assembly.GetName().Version);
+            }
+            catch { }
+
+            L.LogInfo("[GodMode] 已加载 v1.8.0");
             L.LogInfo("[GodMode] 按键: 上帝=" + KGod + " 飞行=" + KFly + " 技能=" + KSkill
                 + " 治疗=" + KHeal + " 传送=" + KTp + " 全亮=" + KLight + " 装备=" + KKit
                 + " 生成器=" + KSpawner + " 一击必杀=" + KOneHit);
@@ -2568,6 +2579,53 @@ namespace CasualtiesGodMode
                     }
                 }
 
+                // ---- ②b 运行时对象（v1.8.0）----
+                // Resources.LoadAll 只能看到 Resources 目录里的资产。这游戏有一部分生物/物件是
+                // 场景里现成摆好的、或运行时才加载进来的 prefab，LoadAll 看不到 —— 于是生成器里
+                // 就「明明游戏里有、却搜不到」。这里再扫一遍内存中已存在的组件补进来。
+                // 只补 BuildingEntity / UsableObject：物品本体在 ① 里已经按 GlobalItems 全量登记，
+                // 再扫一遍只会把地上的掉落物当新物品塞进去。
+                int nLive = 0;
+                try
+                {
+                    List<Component> live = new List<Component>();
+                    try
+                    {
+                        BuildingEntity[] a2 = Resources.FindObjectsOfTypeAll<BuildingEntity>();
+                        if (a2 != null) for (int i = 0; i < a2.Length; i++) if (a2[i] != null) live.Add(a2[i]);
+                    }
+                    catch { }
+                    try
+                    {
+                        UsableObject[] a3 = Resources.FindObjectsOfTypeAll<UsableObject>();
+                        if (a3 != null) for (int i = 0; i < a3.Length; i++) if (a3[i] != null) live.Add(a3[i]);
+                    }
+                    catch { }
+
+                    for (int i = 0; i < live.Count; i++)
+                    {
+                        Component c = live[i];
+                        if (c == null) continue;
+                        GameObject go = c.gameObject;
+                        if (go == null) continue;
+                        string gn = go.name;
+                        if (string.IsNullOrEmpty(gn)) continue;
+                        if (gn.Contains("(Clone)")) gn = gn.Replace("(Clone)", "").Trim();
+                        if (gn.Length == 0 || seen.Contains(gn)) continue;
+                        seen.Add(gn);
+                        BuildingEntity be2 = null;
+                        try { be2 = go.GetComponent<BuildingEntity>(); } catch { be2 = null; }
+                        string comps2 = CollectComponents(go);
+                        string cat2 = ClassifyPrefab(go, be2, SplitSet(comps2));
+                        string nm2 = EntityDisplayName(go, be2);
+                        AddSpawn(gn, nm2, cat2, K_ENTITY, go, 0);
+                        cats.Add(cat2);
+                        nLive++;
+                        if (dump != null) dump.Append(cat2).Append(" | ").Append(gn).Append(" | (运行时)").Append(comps2).Append("\r\n");
+                    }
+                }
+                catch { }
+
                 // ---- ③ 方块 ----
                 int nBlk = 0;
                 try
@@ -2638,7 +2696,8 @@ namespace CasualtiesGodMode
                 }
 
                 if (L != null)
-                    L.LogInfo("[GodMode][生成器] 已载入：物品 " + nItem + " + 实体 " + nEnt + " + 方块 " + nBlk
+                    L.LogInfo("[GodMode][生成器] 已载入：物品 " + nItem + " + 实体 " + nEnt
+                        + " + 运行时 " + nLive + " + 方块 " + nBlk
                         + " = " + SpawnIds.Count + " 种，分类 " + SpawnCats_Sorted.Count + " 个（"
                         + string.Join("/", SpawnCats_Sorted.ToArray()) + "）");
             }
