@@ -1,9 +1,18 @@
 // ============================================================================
-//  Casualties Unknown (Demo) - 上帝模式 God Mode   v2.0.0
+//  Casualties Unknown (Demo) - 上帝模式 God Mode   v1.3.0
 //  运行环境: BepInEx 5.4.23.5 / Unity 2022.3.62 / Mono
 //  编译约束: 用 .NET Framework 自带 csc.exe => 只能 C# 5 语法
 //            (禁用 ?. / 字符串插值 / 表达式体成员 / nameof)
 //  逆向依据: Body/Limb 构造函数中的满值常量, ConsoleScript 的 noclip 实现
+//
+//  v1.3.0 变更（统一菜单 + 物品说明 + 图标兜底）:
+//    * 统一主菜单：F1 打开，一个面板里排好全部 9 个功能，点按钮就能用，右边实时显示开关状态。
+//      热键重排成 F1 主菜单 + F2~F10 九个功能，不再有空键位（F10 现在是一击必杀）。
+//    * 每个物品都带上游戏原有的说明：ItemInfo.description 在网格下方实时显示（悬停即看）。
+//      实体显示组件与分类，方块显示 id / 硬度 / 金属 / 湿滑 / 高温。
+//    * 图标兜底：类人 NPC（幸存者/员工/守卫）根节点上没有 SpriteRenderer，身体是运行时
+//      拼的 —— 取不到图就按分类画剪影（人形/叶子/房子/方块/问号），不会留空格子。
+//    * 拖出来的东西一律做「可见性修复」：把对象自己和所有子物体里被关掉的渲染器重新打开。
 //
 //  v2.0.0 变更（创造模式界面）:
 //    * 生成器改成 Minecraft 创造模式那样的图标网格：9x5 = 45 格一页，每格显示真实图标。
@@ -121,13 +130,14 @@ using UnityEngine.UI;
 
 namespace CasualtiesGodMode
 {
-    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "2.0.0")]
+    [BepInPlugin("casualtiesunknown.godmode", "GodMode", "1.3.0")]
     public class GodModePlugin : BaseUnityPlugin
     {
         internal static ManualLogSource L;
         internal static Harmony H;
         internal static ConfigFile CfgFile;      // 静态方法里没法用 BaseUnityPlugin.Config，存一份
 
+        internal static ConfigEntry<string> CMenu;
         internal static ConfigEntry<string> CGod;
         internal static ConfigEntry<string> CFly;
         internal static ConfigEntry<string> CSkill;
@@ -137,6 +147,7 @@ namespace CasualtiesGodMode
         internal static ConfigEntry<string> CKit;
         internal static ConfigEntry<string> CSpawner;
         internal static ConfigEntry<string> COneHit;
+        internal static ConfigEntry<string> CCfgVer;
         internal static ConfigEntry<bool> CStartGod;
         internal static ConfigEntry<bool> CStartFly;
         internal static ConfigEntry<bool> CHud;
@@ -147,15 +158,17 @@ namespace CasualtiesGodMode
         // v1.2.0：窗口打开时冻结玩家操作（移动/瞄准/挥拳/开枪）
         internal static ConfigEntry<bool> CFreezeInput;
 
-        internal static KeyCode KGod = KeyCode.F1;
-        internal static KeyCode KFly = KeyCode.F2;
-        internal static KeyCode KSkill = KeyCode.F3;
-        internal static KeyCode KHeal = KeyCode.F4;
-        internal static KeyCode KTp = KeyCode.F5;
-        internal static KeyCode KLight = KeyCode.F6;
-        internal static KeyCode KKit = KeyCode.F7;
-        internal static KeyCode KSpawner = KeyCode.F8;
-        internal static KeyCode KOneHit = KeyCode.F9;
+        // v1.3.0：F1 = 统一主菜单，F2~F10 = 9 个功能（按键不再有空位）
+        internal static KeyCode KMenu = KeyCode.F1;
+        internal static KeyCode KGod = KeyCode.F2;
+        internal static KeyCode KFly = KeyCode.F3;
+        internal static KeyCode KSkill = KeyCode.F4;
+        internal static KeyCode KHeal = KeyCode.F5;
+        internal static KeyCode KTp = KeyCode.F6;
+        internal static KeyCode KLight = KeyCode.F7;
+        internal static KeyCode KKit = KeyCode.F8;
+        internal static KeyCode KSpawner = KeyCode.F9;
+        internal static KeyCode KOneHit = KeyCode.F10;
 
         internal static bool GodOn = false;
         internal static bool FlyOn = false;
@@ -263,15 +276,28 @@ namespace CasualtiesGodMode
             L = Logger;
             CfgFile = Config;
 
-            CGod = Config.Bind<string>("Keys", "GodMode", "F1", "上帝模式 开/关");
-            CFly = Config.Bind<string>("Keys", "FlyNoClip", "F2", "上天入地(飞行+穿墙) 开/关");
-            CSkill = Config.Bind<string>("Keys", "MaxSkills", "F3", "力量/抗性/智力 拉满");
-            CHeal = Config.Bind<string>("Keys", "FullHeal", "F4", "清除全部负面状态（治疗+情绪+中毒等）一次");
-            CTp = Config.Bind<string>("Keys", "TeleportToMouse", "F5", "传送到鼠标位置");
-            CLight = Config.Bind<string>("Keys", "Fullbright", "F6", "全亮 开/关");
-            CKit = Config.Bind<string>("Keys", "StarterKit", "F7", "领取初始装备包");
-            CSpawner = Config.Bind<string>("Keys", "ItemSpawner", "F8", "生成万物窗口 开/关");
-            COneHit = Config.Bind<string>("Keys", "OneHitKill", "F9", "一击必杀（打一下就秒掉目标）开/关");
+            // v1.3.0 键位布局：F1 = 统一主菜单，F2~F10 = 9 个功能，不留空键
+            CMenu = Config.Bind<string>("Keys", "Menu", "F1", "统一主菜单 开/关");
+            CGod = Config.Bind<string>("Keys", "GodMode", "F2", "上帝模式 开/关");
+            CFly = Config.Bind<string>("Keys", "FlyNoClip", "F3", "上天入地(飞行+穿墙) 开/关");
+            CSkill = Config.Bind<string>("Keys", "MaxSkills", "F4", "力量/抗性/智力 拉满");
+            CHeal = Config.Bind<string>("Keys", "FullHeal", "F5", "清除全部负面状态（治疗+情绪+中毒等）一次");
+            CTp = Config.Bind<string>("Keys", "TeleportToMouse", "F6", "传送到鼠标位置");
+            CLight = Config.Bind<string>("Keys", "Fullbright", "F7", "全亮 开/关");
+            CKit = Config.Bind<string>("Keys", "StarterKit", "F8", "领取初始装备包");
+            CSpawner = Config.Bind<string>("Keys", "ItemSpawner", "F9", "生成万物窗口 开/关");
+            COneHit = Config.Bind<string>("Keys", "OneHitKill", "F10", "一击必杀（打一下就秒掉目标）开/关");
+
+            // 老配置文件里的键位是 v1.2 的（F1=上帝模式），这里一次性迁移到 v1.3 布局
+            CCfgVer = Config.Bind<string>("Options", "ConfigVersion", "", "配置文件版本（模组自己维护，不要手改）");
+            if (CCfgVer.Value != "1.3.0")
+            {
+                CMenu.Value = "F1"; CGod.Value = "F2"; CFly.Value = "F3"; CSkill.Value = "F4";
+                CHeal.Value = "F5"; CTp.Value = "F6"; CLight.Value = "F7"; CKit.Value = "F8";
+                CSpawner.Value = "F9"; COneHit.Value = "F10";
+                CCfgVer.Value = "1.3.0";
+                L.LogInfo("[GodMode] 键位已升级到 v1.3.0 布局：F1 主菜单，F2~F10 功能键");
+            }
             CStartGod = Config.Bind<bool>("Options", "StartWithGodMode", false, "启动时自动开启上帝模式");
             CStartFly = Config.Bind<bool>("Options", "StartWithFly", false, "启动时自动开启飞行");
             CHud = Config.Bind<bool>("Options", "ShowHud", true, "左上角显示状态提示");
@@ -294,15 +320,16 @@ namespace CasualtiesGodMode
 
             // ---- 可改键位表：顺序 = 界面上从上到下 ----
             KeyBinds.Clear();
-            AddBind("上帝模式", "GodMode", CGod, KeyCode.F1, KID_GOD);
-            AddBind("上天入地", "FlyNoClip", CFly, KeyCode.F2, KID_FLY);
-            AddBind("技能拉满", "MaxSkills", CSkill, KeyCode.F3, KID_SKILL);
-            AddBind("清除负面状态", "FullHeal", CHeal, KeyCode.F4, KID_HEAL);
-            AddBind("传送到鼠标", "TeleportToMouse", CTp, KeyCode.F5, KID_TP);
-            AddBind("全亮", "Fullbright", CLight, KeyCode.F6, KID_LIGHT);
-            AddBind("初始装备包", "StarterKit", CKit, KeyCode.F7, KID_KIT);
-            AddBind("生成万物窗口", "ItemSpawner", CSpawner, KeyCode.F8, KID_SPAWNER);
-            AddBind("一击必杀", "OneHitKill", COneHit, KeyCode.F9, KID_ONEHIT);
+            AddBind("统一主菜单", "Menu", CMenu, KeyCode.F1, KID_MENU);
+            AddBind("上帝模式", "GodMode", CGod, KeyCode.F2, KID_GOD);
+            AddBind("上天入地", "FlyNoClip", CFly, KeyCode.F3, KID_FLY);
+            AddBind("技能拉满", "MaxSkills", CSkill, KeyCode.F4, KID_SKILL);
+            AddBind("清除负面状态", "FullHeal", CHeal, KeyCode.F5, KID_HEAL);
+            AddBind("传送到鼠标", "TeleportToMouse", CTp, KeyCode.F6, KID_TP);
+            AddBind("全亮", "Fullbright", CLight, KeyCode.F7, KID_LIGHT);
+            AddBind("初始装备包", "StarterKit", CKit, KeyCode.F8, KID_KIT);
+            AddBind("生成万物窗口", "ItemSpawner", CSpawner, KeyCode.F9, KID_SPAWNER);
+            AddBind("一击必杀", "OneHitKill", COneHit, KeyCode.F10, KID_ONEHIT);
             SyncKeysFromBinds();
 
             GodOn = CStartGod.Value;
@@ -324,7 +351,7 @@ namespace CasualtiesGodMode
             }
             catch { }
 
-            L.LogInfo("[GodMode] 已加载 v2.0.0（创造模式界面）");
+            L.LogInfo("[GodMode] 已加载 v1.3.0（统一菜单 + 物品说明 + 图标兜底）");
             L.LogInfo("[GodMode] 按键: 上帝=" + KGod + " 飞行=" + KFly + " 技能=" + KSkill
                 + " 治疗=" + KHeal + " 传送=" + KTp + " 全亮=" + KLight + " 装备=" + KKit
                 + " 生成器=" + KSpawner + " 一击必杀=" + KOneHit);
@@ -404,110 +431,31 @@ namespace CasualtiesGodMode
                     return;
                 }
 
-                if (Input.GetKeyDown(KGod))
+                // v1.3.0：Tick 每帧会被两个补丁各调一次（相机后置 + 控制台后置），
+                // 而 Input.GetKeyDown 在同一帧里会一直为 true —— 不加这道帧门，按一次 F1
+                // 会「开→关」各触发一次，等于没按。所有热键都必须走这个帧门。
+                if (HotkeyFrame != Time.frameCount)
                 {
-                    GodOn = !GodOn;
-                    if (GodOn)
+                    HotkeyFrame = Time.frameCount;
+
+                    // v1.3.0：F1 = 统一主菜单（点按钮就能用全部功能）
+                    if (Input.GetKeyDown(KMenu))
                     {
-                        Body pb = PlayerBody();
-                        if (pb != null) RestoreBody(pb);
-                        Notify("上帝模式：开启（无敌 / 全状态满值）");
+                        MenuOn = !MenuOn;
+                        if (MenuOn) { BuildMenuUi(); MenuRefresh(); }
+                        if (UiMenuRoot != null) UiMenuRoot.gameObject.SetActive(MenuOn);
+                        Notify(MenuOn ? "主菜单：开启（F1 关闭）" : "主菜单：关闭");
                     }
-                    else
-                    {
-                        Notify("上帝模式：关闭");
-                    }
-                }
 
-                if (Input.GetKeyDown(KFly))
-                {
-                    FlyOn = !FlyOn;
-                    Notify(FlyOn ? "上天入地：开启（WASD 飞行，Shift 加速）" : "上天入地：关闭");
-                }
-
-                if (Input.GetKeyDown(KSkill))
-                {
-                    Body pb2 = PlayerBody();
-                    if (pb2 != null)
-                    {
-                        MaxSkills(pb2);
-                        int lv = (pb2.skills != null) ? pb2.skills.STR : 0;
-                        Notify("技能已拉满 (STR/RES/INT = " + lv + ")");
-                    }
-                    else Notify("未找到玩家角色");
-                }
-
-                if (Input.GetKeyDown(KHeal))
-                {
-                    Body pb3 = PlayerBody();
-                    if (pb3 != null)
-                    {
-                        DiagSnapshot(pb3, "F4 之前");
-                        RestoreBody(pb3);
-                        DiagSnapshot(pb3, "F4 之后");
-                        DiagLeft = 180;          // 之后 3 秒再采样 6 次，看角色是不是还在滑
-                        RefreshMoodles();
-                        Notify("已清除全部负面状态（治疗 + 情绪 + 中毒…）");
-                    }
-                    else Notify("未找到玩家角色");
-                }
-
-                if (Input.GetKeyDown(KTp))
-                {
-                    if (RunCmd("tp")) Notify("已传送到鼠标位置");
-                    else Notify("传送失败（游戏世界未就绪）");
-                }
-
-                if (Input.GetKeyDown(KLight))
-                {
-                    if (RunCmd("fullbright"))
-                    {
-                        LightOn = !LightOn;
-                        Notify(LightOn ? "全亮：开启" : "全亮：关闭");
-                    }
-                }
-
-                if (Input.GetKeyDown(KKit))
-                {
-                    if (RunCmd("starterkit")) Notify("已领取初始装备包");
-                }
-
-                if (Input.GetKeyDown(KSpawner))
-                {
-                    SpawnerOn = !SpawnerOn;
-                    if (SpawnerOn)
-                    {
-                        BuildSpawnList(true);
-                        UiShownDirty = true;
-                        BuildUi();
-                        UiKeyMode = false;      // 每次打开都从生成列表开始，不留在键位页
-                        UiKeySel = -1;
-                        // v2.0.0：一开窗直接进「创造模式网格」，全部物品铺成 9x5 图标；
-                        // 想看分类总览就点中间那个分类标签（原来的分类列表还在）
-                        UiCatMode = false;
-                        SpawnCat = "全部";
-                        UiPage = 0;
-                        UiSel = 0;
-                        UiClampPage();
-                        // 第一次打开时把生成点默认设在角色脚下，这样「自己选的点」模式不会指到 (0,0)
-                        if (!SpawnAnchorSet) SetAnchorFromPlayer();
-                        UiSetVisible(true);
-                        Notify("生成器：开启（共 " + SpawnIds.Count + " 种，"
-                            + SpawnCats_Sorted.Count + " 个分类）  当前位置：" + PosModeName() + PosInfo());
-                    }
-                    else
-                    {
-                        UiSetVisible(false);
-                        Notify("生成器：关闭");
-                    }
-                }
-
-                if (Input.GetKeyDown(KOneHit))
-                {
-                    OneHitOn = !OneHitOn;
-                    Notify(OneHitOn
-                        ? ("一击必杀：开启（打一下就秒，倍率 " + Mathf.RoundToInt(OneHitMul()) + "x）")
-                        : "一击必杀：关闭");
+                    if (Input.GetKeyDown(KGod)) ActGod();
+                    if (Input.GetKeyDown(KFly)) ActFly();
+                    if (Input.GetKeyDown(KSkill)) ActSkill();
+                    if (Input.GetKeyDown(KHeal)) ActHeal();
+                    if (Input.GetKeyDown(KTp)) ActTp();
+                    if (Input.GetKeyDown(KLight)) ActLight();
+                    if (Input.GetKeyDown(KKit)) ActKit();
+                    if (Input.GetKeyDown(KSpawner)) ActSpawner();
+                    if (Input.GetKeyDown(KOneHit)) ActOneHit();
                 }
 
                 Body p = PlayerBody();
@@ -516,6 +464,7 @@ namespace CasualtiesGodMode
                 ClampFlight();
                 RepairTraders();
                 ProcessSpawnQueue();
+                if (MenuOn) MenuInput(Input.mousePosition);
                 UiRefresh();
             }
             catch (Exception e)
@@ -573,6 +522,311 @@ namespace CasualtiesGodMode
                 + " 世界=" + world
                 + " 限位=" + ClampCount + " NPC修正=" + TraderSkipCount + " 技能修正=" + SkillFixCount
                 + " 上帝=" + GodOn + " 飞行=" + FlyOn);
+        }
+
+        // ==================================================================
+        //  v1.3.0  功能动作（热键与主菜单按钮共用同一套逻辑）
+        // ==================================================================
+        internal static void ActGod()
+        {
+            GodOn = !GodOn;
+            if (GodOn)
+            {
+                Body pb = PlayerBody();
+                if (pb != null) RestoreBody(pb);
+                Notify("上帝模式：开启（无敌 / 全状态满值）");
+            }
+            else Notify("上帝模式：关闭");
+            MenuRefresh();
+        }
+
+        internal static void ActFly()
+        {
+            FlyOn = !FlyOn;
+            Notify(FlyOn ? "上天入地：开启（WASD 飞行，Shift 加速）" : "上天入地：关闭");
+            MenuRefresh();
+        }
+
+        internal static void ActSkill()
+        {
+            Body pb = PlayerBody();
+            if (pb != null)
+            {
+                MaxSkills(pb);
+                int lv = (pb.skills != null) ? pb.skills.STR : 0;
+                Notify("技能已拉满 (STR/RES/INT = " + lv + ")");
+            }
+            else Notify("未找到玩家角色");
+        }
+
+        internal static void ActHeal()
+        {
+            Body pb = PlayerBody();
+            if (pb != null)
+            {
+                DiagSnapshot(pb, "F4 之前");
+                RestoreBody(pb);
+                DiagSnapshot(pb, "F4 之后");
+                DiagLeft = 180;
+                RefreshMoodles();
+                Notify("已清除全部负面状态（治疗 + 情绪 + 中毒…）");
+            }
+            else Notify("未找到玩家角色");
+        }
+
+        internal static void ActTp()
+        {
+            if (RunCmd("tp")) Notify("已传送到鼠标位置");
+            else Notify("传送失败（游戏世界未就绪）");
+        }
+
+        internal static void ActLight()
+        {
+            if (RunCmd("fullbright"))
+            {
+                LightOn = !LightOn;
+                Notify(LightOn ? "全亮：开启" : "全亮：关闭");
+            }
+            MenuRefresh();
+        }
+
+        internal static void ActKit()
+        {
+            if (RunCmd("starterkit")) Notify("已领取初始装备包");
+        }
+
+        internal static void ActSpawner()
+        {
+            SpawnerOn = !SpawnerOn;
+            if (SpawnerOn)
+            {
+                BuildSpawnList(true);
+                UiShownDirty = true;
+                BuildUi();
+                UiKeyMode = false;
+                UiKeySel = -1;
+                UiCatMode = false;
+                UiCatList.Clear();
+                SpawnCat = "全部";
+                UiPage = 0;
+                UiSel = 0;
+                UiShownDirty = true;
+                UiClampPage();
+                if (!SpawnAnchorSet) SetAnchorFromPlayer();
+                UiSetVisible(true);
+                Notify("生成器：开启（共 " + SpawnIds.Count + " 种，"
+                    + SpawnCats_Sorted.Count + " 个分类）  当前位置：" + PosModeName() + PosInfo());
+            }
+            else
+            {
+                UiSetVisible(false);
+                Notify("生成器：关闭");
+            }
+            MenuRefresh();
+        }
+
+        internal static void ActOneHit()
+        {
+            OneHitOn = !OneHitOn;
+            Notify(OneHitOn
+                ? ("一击必杀：开启（打一下就秒，倍率 " + Mathf.RoundToInt(OneHitMul()) + "x）")
+                : "一击必杀：关闭");
+            MenuRefresh();
+        }
+
+        // ==================================================================
+        //  v1.3.0  统一主菜单（F1）
+        // ==================================================================
+        internal static bool MenuOn;
+        internal static int HotkeyFrame = -1;
+        internal static RectTransform UiMenuRoot;
+
+        internal class MenuRow
+        {
+            internal RectTransform Rt;
+            internal Image Bg;
+            internal TextMeshProUGUI Key;
+            internal TextMeshProUGUI Name;
+            internal TextMeshProUGUI State;
+            internal int Id;
+        }
+        internal static readonly List<MenuRow> MenuRows = new List<MenuRow>();
+
+        internal const int M_GOD = 0, M_FLY = 1, M_SKILL = 2, M_HEAL = 3, M_TP = 4,
+                           M_LIGHT = 5, M_KIT = 6, M_SPAWNER = 7, M_ONEHIT = 8, M_CLOSE = 9;
+
+        internal static readonly string[] MenuNames =
+        {
+            "上帝模式", "上天入地", "技能拉满", "清除负面状态", "传送到鼠标",
+            "全亮", "初始装备包", "生成万物", "一击必杀", "关闭菜单"
+        };
+
+        internal static void BuildMenuUi()
+        {
+            if (UiMenuRoot != null) return;
+            try
+            {
+                if (!UiBuilt) BuildUi();
+                if (!UiBuilt) return;
+
+                const float W = 460f, ROW = 46f, GAP = 6f;
+                float h = 64f + MenuNames.Length * (ROW + GAP) + 16f;
+
+                UiMenuRoot = NewRect("Menu", UiRoot.transform);
+                Image mbg = UiMenuRoot.gameObject.AddComponent<Image>();
+                mbg.raycastTarget = false;
+                mbg.sprite = SprPanel;
+                mbg.type = Image.Type.Sliced;
+                mbg.color = new Color(0.055f, 0.062f, 0.085f, 0.97f);
+                UiMenuRoot.sizeDelta = new Vector2(W, h);
+                UiMenuRoot.anchoredPosition = new Vector2(Screen.width - W - 40f, -40f);
+
+                Image bar = NewImage("Accent", UiMenuRoot, SprCell, new Color(0.42f, 0.55f, 1f, 0.85f), true);
+                bar.rectTransform.anchorMin = new Vector2(0f, 1f);
+                bar.rectTransform.anchorMax = new Vector2(1f, 1f);
+                bar.rectTransform.pivot = new Vector2(0.5f, 1f);
+                bar.rectTransform.sizeDelta = new Vector2(-24f, 3f);
+                bar.rectTransform.anchoredPosition = new Vector2(0f, -1f);
+
+                TextMeshProUGUI title = NewText("MTitle", UiMenuRoot, 21, new Color(1f, 0.9f, 0.45f, 1f), TextAlignmentOptions.TopLeft);
+                title.text = "上帝模式 · 统一菜单";
+                title.rectTransform.sizeDelta = new Vector2(W - 20f, 30f);
+                title.rectTransform.anchoredPosition = new Vector2(12f, -8f);
+
+                TextMeshProUGUI sub = NewText("MSub", UiMenuRoot, 13, new Color(0.66f, 0.72f, 0.86f, 1f), TextAlignmentOptions.TopLeft);
+                sub.text = "点按钮 = 使用功能    F1 关闭";
+                sub.rectTransform.sizeDelta = new Vector2(W - 20f, 20f);
+                sub.rectTransform.anchoredPosition = new Vector2(12f, -36f);
+
+                for (int i = 0; i < MenuNames.Length; i++)
+                {
+                    float y = -(58f + i * (ROW + GAP));
+                    MenuRow r = new MenuRow();
+                    r.Id = i;
+                    r.Rt = NewRect("MR" + i, UiMenuRoot);
+                    r.Rt.sizeDelta = new Vector2(W - 24f, ROW);
+                    r.Rt.anchoredPosition = new Vector2(12f, y);
+
+                    r.Bg = r.Rt.gameObject.AddComponent<Image>();
+                    r.Bg.raycastTarget = false;
+                    r.Bg.sprite = SprCell;
+                    r.Bg.type = Image.Type.Sliced;
+                    r.Bg.color = new Color(1f, 1f, 1f, 0.06f);
+
+                    r.Key = NewText("K", r.Rt, 15, new Color(0.55f, 0.72f, 1f, 1f), TextAlignmentOptions.MidlineLeft);
+                    r.Key.rectTransform.sizeDelta = new Vector2(64f, ROW);
+                    r.Key.rectTransform.anchoredPosition = new Vector2(10f, 0f);
+
+                    r.Name = NewText("N", r.Rt, 17, new Color(0.92f, 0.95f, 1f, 1f), TextAlignmentOptions.MidlineLeft);
+                    r.Name.text = MenuNames[i];
+                    r.Name.rectTransform.sizeDelta = new Vector2(196f, ROW);
+                    r.Name.rectTransform.anchoredPosition = new Vector2(70f, 0f);
+
+                    r.State = NewText("S", r.Rt, 15, new Color(0.55f, 0.9f, 0.62f, 1f), TextAlignmentOptions.MidlineRight);
+                    r.State.rectTransform.anchorMin = new Vector2(1f, 1f);
+                    r.State.rectTransform.anchorMax = new Vector2(1f, 1f);
+                    r.State.rectTransform.pivot = new Vector2(1f, 1f);
+                    r.State.rectTransform.sizeDelta = new Vector2(128f, ROW);
+                    r.State.rectTransform.anchoredPosition = new Vector2(-10f, 0f);
+
+                    MenuRows.Add(r);
+                }
+
+                TextMeshProUGUI foot = NewText("MFoot", UiMenuRoot, 12, new Color(0.6f, 0.66f, 0.8f, 1f), TextAlignmentOptions.TopLeft);
+                foot.text = "键位可在生成器窗口里改（键位设置），状态看左上角黄字";
+                foot.rectTransform.sizeDelta = new Vector2(W - 24f, 34f);
+                foot.rectTransform.anchoredPosition = new Vector2(12f, -(58f + MenuNames.Length * (ROW + GAP) + 2f));
+
+                UiMenuRoot.gameObject.SetActive(false);
+            }
+            catch (Exception e) { if (L != null) L.LogError("[GodMode][界面] 建主菜单失败: " + e); }
+        }
+
+        internal static string MenuKeyText(int id)
+        {
+            KeyCode k;
+            switch (id)
+            {
+                case M_GOD: k = KGod; break;
+                case M_FLY: k = KFly; break;
+                case M_SKILL: k = KSkill; break;
+                case M_HEAL: k = KHeal; break;
+                case M_TP: k = KTp; break;
+                case M_LIGHT: k = KLight; break;
+                case M_KIT: k = KKit; break;
+                case M_SPAWNER: k = KSpawner; break;
+                case M_ONEHIT: k = KOneHit; break;
+                default: k = KMenu; break;
+            }
+            return k.ToString();
+        }
+
+        internal static void MenuRefresh()
+        {
+            if (UiMenuRoot == null) return;
+            try
+            {
+                for (int i = 0; i < MenuRows.Count; i++)
+                {
+                    MenuRow r = MenuRows[i];
+                    r.Key.text = MenuKeyText(r.Id);
+                    string st;
+                    switch (r.Id)
+                    {
+                        case M_GOD: st = GodOn ? "开" : "关"; break;
+                        case M_FLY: st = FlyOn ? "开" : "关"; break;
+                        case M_LIGHT: st = LightOn ? "开" : "关"; break;
+                        case M_SPAWNER: st = SpawnerOn ? "开" : "关"; break;
+                        case M_ONEHIT: st = OneHitOn ? "开" : "关"; break;
+                        case M_SKILL: st = "点一次"; break;
+                        case M_HEAL: st = "点一次"; break;
+                        case M_TP: st = "点一次"; break;
+                        case M_KIT: st = "点一次"; break;
+                        default: st = ">"; break;
+                    }
+                    r.State.text = st;
+                }
+            }
+            catch { }
+        }
+
+        internal static void MenuInput(Vector2 mp)
+        {
+            if (!MenuOn || UiMenuRoot == null) return;
+            try
+            {
+                Vector2 lp = new Vector2(mp.x, mp.y);
+                for (int i = 0; i < MenuRows.Count; i++)
+                {
+                    MenuRow r = MenuRows[i];
+                    bool hov = RectTransformUtility.RectangleContainsScreenPoint(r.Rt, lp, null);
+                    if (hov) r.Bg.color = new Color(0.42f, 0.55f, 1f, 0.35f);
+                    else r.Bg.color = new Color(1f, 1f, 1f, 0.06f);
+                    if (hov && Input.GetMouseButtonDown(0)) MenuAct(r.Id);
+                }
+            }
+            catch { }
+        }
+
+        internal static void MenuAct(int id)
+        {
+            switch (id)
+            {
+                case M_GOD: ActGod(); break;
+                case M_FLY: ActFly(); break;
+                case M_SKILL: ActSkill(); break;
+                case M_HEAL: ActHeal(); break;
+                case M_TP: ActTp(); break;
+                case M_LIGHT: ActLight(); break;
+                case M_KIT: ActKit(); break;
+                case M_SPAWNER: ActSpawner(); break;
+                case M_ONEHIT: ActOneHit(); break;
+                case M_CLOSE:
+                    MenuOn = false;
+                    if (UiMenuRoot != null) UiMenuRoot.gameObject.SetActive(false);
+                    Notify("主菜单：关闭");
+                    break;
+            }
         }
 
         // ==================================================================
@@ -663,6 +917,7 @@ namespace CasualtiesGodMode
             public int Id;                       // 见 KID_* 常量
         }
 
+        internal const int KID_MENU = 9;
         internal const int KID_GOD = 0;
         internal const int KID_FLY = 1;
         internal const int KID_SKILL = 2;
@@ -688,6 +943,7 @@ namespace CasualtiesGodMode
         internal static TextMeshProUGUI UiTitle;
         internal static TextMeshProUGUI UiInfo;
         internal static TextMeshProUGUI UiHint;
+        internal static TextMeshProUGUI UiDesc;
         internal static TextMeshProUGUI UiStatus;
         internal static readonly List<UiRow> UiRowList = new List<UiRow>();
         internal static readonly List<UiBtn> UiBtnList = new List<UiBtn>();
@@ -893,11 +1149,98 @@ namespace CasualtiesGodMode
             if (go == null) return null;
             try
             {
-                SpriteRenderer sr = go.GetComponentInChildren<SpriteRenderer>(true);
-                if (sr != null && sr.sprite != null) return sr.sprite;
+                // v1.3.0：类人 NPC（guard / scientist…）根节点没有 SpriteRenderer，
+                // 身体是运行时按肢体拼的，所以要往下多找几层、并且挑面积最大的那张图。
+                SpriteRenderer[] all = go.GetComponentsInChildren<SpriteRenderer>(true);
+                Sprite best = null;
+                float bestArea = -1f;
+                if (all != null)
+                {
+                    for (int i = 0; i < all.Length; i++)
+                    {
+                        SpriteRenderer sr = all[i];
+                        if (sr == null || sr.sprite == null) continue;
+                        float a = 0f;
+                        try { a = sr.sprite.rect.width * sr.sprite.rect.height; } catch { a = 1f; }
+                        if (a > bestArea) { bestArea = a; best = sr.sprite; }
+                    }
+                }
+                if (best != null) return best;
             }
             catch { }
             return null;
+        }
+
+        // v1.3.0：没有贴图的条目按分类画一个剪影图标，保证每格都有图标
+        internal static readonly Dictionary<int, Sprite> GlyphCache = new Dictionary<int, Sprite>();
+
+        internal static Sprite GlyphIcon(string cat, int kind)
+        {
+            if (cat == null) cat = "";
+            int gid = kind * 100 + (cat.StartsWith("生物") ? 1 : cat.StartsWith("植物") ? 2
+                     : cat.StartsWith("建筑") ? 3 : cat.StartsWith("方块") ? 4 : 5);
+            Sprite s;
+            if (GlyphCache.TryGetValue(gid, out s)) return s;
+            try
+            {
+                const int N = 48;
+                Texture2D t = new Texture2D(N, N, TextureFormat.RGBA32, false);
+                t.hideFlags = HideFlags.HideAndDontSave;
+                t.filterMode = FilterMode.Point;
+                Color32[] px = new Color32[N * N];
+                Color32 clear = new Color32(0, 0, 0, 0);
+                for (int i = 0; i < px.Length; i++) px[i] = clear;
+
+                Color32 fg = new Color32(210, 220, 245, 255);
+                if (kind == K_BLOCK) fg = new Color32(150, 170, 210, 255);
+                else if (kind == K_ENTITY) fg = new Color32(160, 220, 190, 255);
+
+                int mode = gid % 100;
+                for (int y = 0; y < N; y++)
+                {
+                    for (int x = 0; x < N; x++)
+                    {
+                        bool on = false;
+                        float cx = x - N / 2f, cy = y - N / 2f;
+                        if (mode == 1)       // 人形：头 + 身子 + 两条腿
+                        {
+                            if (cx * cx + (cy - 13) * (cy - 13) <= 42f) on = true;
+                            if (Mathf.Abs(cx) <= 8f && cy <= 8f && cy >= -12f) on = true;
+                            if (Mathf.Abs(Mathf.Abs(cx) - 5f) <= 2.5f && cy <= -12f && cy >= -21f) on = true;
+                        }
+                        else if (mode == 2)  // 叶子
+                        {
+                            float d = Mathf.Abs(cx) * 1.15f + Mathf.Abs(cy) * 0.55f;
+                            if (d <= 13f) on = true;
+                            if (Mathf.Abs(cx) <= 1.5f && cy >= -22f && cy <= 0f) on = true;
+                        }
+                        else if (mode == 3)  // 房子
+                        {
+                            if (Mathf.Abs(cx) <= 14f && Mathf.Abs(cy) <= 10f) on = true;
+                            if (cy > 8f && Mathf.Abs(cx) <= (22f - cy) * 1.6f) on = true;
+                        }
+                        else if (mode == 4)  // 方块
+                        {
+                            if (Mathf.Abs(cx) <= 13f && Mathf.Abs(cy) <= 13f) on = true;
+                        }
+                        else                 // 问号
+                        {
+                            if (Mathf.Abs(cx) <= 2f && cy >= -8f && cy <= 6f) on = true;
+                            if (Mathf.Abs(cx) <= 6f && Mathf.Abs(cy - 12f) <= 2.5f) on = true;
+                            if (Mathf.Abs(cx) <= 5f && cy >= 6f && cy <= 13f) on = true;
+                            if (Mathf.Abs(cx) <= 2f && cy >= -18f && cy <= -14f) on = true;
+                        }
+                        if (on) px[y * N + x] = fg;
+                    }
+                }
+                t.SetPixels32(px);
+                t.Apply(false, false);
+                s = Sprite.Create(t, new Rect(0f, 0f, N, N), new Vector2(0.5f, 0.5f), 1f);
+                s.hideFlags = HideFlags.HideAndDontSave;
+                GlyphCache[gid] = s;
+            }
+            catch { }
+            return s;
         }
 
         // 方块图标：tileset 里按方块 id 直接取
@@ -955,6 +1298,9 @@ namespace CasualtiesGodMode
                         }
                         catch { }
                     }
+                    // v1.3.0：还是没有图（类人 NPC / 运行时拼出来的东西）就画剪影，
+                    // 否则网格里会是一片空白格子
+                    if (s == null) s = GlyphIcon(SpawnCats[k], SpawnKinds[k]);
                 }
             }
             catch { }
@@ -1084,6 +1430,21 @@ namespace CasualtiesGodMode
                                   : new Color(1f, 1f, 1f, 0.055f);
                 c.Name.color = hov ? Color.white : new Color(0.86f, 0.89f, 0.96f, 1f);
             }
+
+            // v1.3.0：说明栏（悬停优先，没有悬停就显示选中的那格）
+            if (UiDesc != null)
+            {
+                int hi = UiHover;
+                if (hi < 0 || hi >= UiCells.Count) hi = UiSel;
+                int idx2 = UiPage * CELLS_PER_PAGE + hi;
+                if (idx2 >= 0 && idx2 < UiShown.Count)
+                {
+                    int kk = UiShown[idx2];
+                    string d = (kk >= 0 && kk < SpawnDescs.Count) ? SpawnDescs[kk] : "";
+                    string head = SpawnNames[kk] + "    [" + SpawnCats[kk] + "]";
+                    UiDesc.text = string.IsNullOrEmpty(d) ? head : (head + "\n" + d);
+                }
+            }
         }
 
         internal static void BuildUi()
@@ -1122,7 +1483,7 @@ namespace CasualtiesGodMode
                 pbg.sprite = SprPanel;
                 pbg.type = Image.Type.Sliced;
                 pbg.color = new Color(0.055f, 0.062f, 0.085f, 0.97f);
-                float ph = Mathf.Min(UI_LIST_TOP + GRID_ROWS * CELL_H + 58f, Screen.height - 40f);
+                float ph = Mathf.Min(UI_LIST_TOP + GRID_ROWS * CELL_H + 128f, Screen.height - 40f);
                 UiPanel.sizeDelta = new Vector2(UI_PANEL_W, ph);
                 UiPanel.anchoredPosition = new Vector2(40f, -40f);
 
@@ -1223,9 +1584,24 @@ namespace CasualtiesGodMode
                 // v2.0.0：图标网格（列表页仍然沿用上面那 16 行）
                 BuildGrid(UI_LIST_TOP);
 
+                // v1.3.0：网格下方的「说明」栏（显示游戏原有的物品说明）
+                Image descBg = NewImage("DescBg", UiPanel, SprCell, new Color(0.10f, 0.11f, 0.16f, 0.98f), true);
+                descBg.rectTransform.anchorMin = new Vector2(0f, 1f);
+                descBg.rectTransform.anchorMax = new Vector2(1f, 1f);
+                descBg.rectTransform.pivot = new Vector2(0.5f, 1f);
+                descBg.rectTransform.sizeDelta = new Vector2(-20f, 56f);
+                descBg.rectTransform.anchoredPosition = new Vector2(0f, -(UI_LIST_TOP + GRID_ROWS * CELL_H + 4f));
+
+                UiDesc = NewText("Desc", UiPanel, 13, new Color(0.86f, 0.90f, 0.98f, 1f), TextAlignmentOptions.TopLeft);
+                UiDesc.rectTransform.sizeDelta = new Vector2(UI_PANEL_W - 36f, 52f);
+                UiDesc.rectTransform.anchoredPosition = new Vector2(18f, -(UI_LIST_TOP + GRID_ROWS * CELL_H + 7f));
+                try { UiDesc.enableWordWrapping = true; } catch { }
+                try { UiDesc.overflowMode = TextOverflowModes.Ellipsis; } catch { }
+                UiDesc.text = "把鼠标放到格子上，这里会显示物品的说明。";
+
                 UiHint = NewText("Hint", UiPanel, 14, new Color(0.62f, 0.68f, 0.78f, 1f), TextAlignmentOptions.TopLeft);
                 UiHint.rectTransform.sizeDelta = new Vector2(UI_PANEL_W - 20f, 46f);
-                UiHint.rectTransform.anchoredPosition = new Vector2(10f, -(UI_LIST_TOP + GRID_ROWS * CELL_H + 4f));
+                UiHint.rectTransform.anchoredPosition = new Vector2(10f, -(UI_LIST_TOP + GRID_ROWS * CELL_H + 66f));
 
                 UiPanel.gameObject.SetActive(false);
                 UiBuilt = true;
@@ -2381,7 +2757,8 @@ namespace CasualtiesGodMode
             for (int i = 0; i < KeyBinds.Count; i++)
             {
                 KeyBind b = KeyBinds[i];
-                if (b.Id == KID_GOD) KGod = b.Cur;
+                if (b.Id == KID_MENU) KMenu = b.Cur;
+                else if (b.Id == KID_GOD) KGod = b.Cur;
                 else if (b.Id == KID_FLY) KFly = b.Cur;
                 else if (b.Id == KID_SKILL) KSkill = b.Cur;
                 else if (b.Id == KID_HEAL) KHeal = b.Cur;
@@ -2688,7 +3065,15 @@ namespace CasualtiesGodMode
         // ==================================================================
 
         // 往表里放一条（四个数组必须同步增长）
+        // v1.3.0：每个条目的「游戏原有说明」（悬停时显示在网格下方）
+        internal static readonly List<string> SpawnDescs = new List<string>();
+
         internal static void AddSpawn(string id, string name, string cat, int kind, GameObject obj, int block)
+        {
+            AddSpawn(id, name, cat, kind, obj, block, null);
+        }
+
+        internal static void AddSpawn(string id, string name, string cat, int kind, GameObject obj, int block, string desc)
         {
             SpawnIds.Add(id);
             SpawnNames.Add(name);
@@ -2696,6 +3081,7 @@ namespace CasualtiesGodMode
             SpawnKinds.Add(kind);
             SpawnObjs.Add(obj);
             SpawnBlocks.Add(block);
+            SpawnDescs.Add(desc == null ? "" : desc);
         }
 
         internal static bool PlantWord(string low)
@@ -2945,6 +3331,7 @@ namespace CasualtiesGodMode
                 SpawnKinds.Clear();
                 SpawnObjs.Clear();
                 SpawnBlocks.Clear();
+                SpawnDescs.Clear();
 
                 HashSet<string> seen = new HashSet<string>();
                 HashSet<string> cats = new HashSet<string>();
@@ -2968,7 +3355,19 @@ namespace CasualtiesGodMode
                         // 所以改成先用「穿得上的 / 打得响的」硬指标 + 关键词细分，再退回游戏分类。
                         string gcat = (info != null && !string.IsNullOrEmpty(info.category)) ? info.category : "";
                         string cat = ItemCat(kv.Key, info, gcat);
-                        AddSpawn(kv.Key, nm, cat, K_ITEM, null, 0);
+                        // v1.3.0：把游戏自带的物品说明一起收进来
+                        string desc = "";
+                        try
+                        {
+                            if (info != null && !string.IsNullOrEmpty(info.description)) desc = info.description;
+                        }
+                        catch { }
+                        if (string.IsNullOrEmpty(desc))
+                        {
+                            string ln0 = Loc(kv.Key + "_desc");
+                            if (!string.IsNullOrEmpty(ln0)) desc = ln0;
+                        }
+                        AddSpawn(kv.Key, nm, cat, K_ITEM, null, 0, desc);
                         seen.Add(kv.Key);
                         cats.Add(cat);
                         nItem++;
@@ -3006,7 +3405,8 @@ namespace CasualtiesGodMode
                         string cat = ClassifyPrefab(go, be, SplitSet(comps));
 
                         string nm = EntityDisplayName(go, be);
-                        AddSpawn(gn, nm, cat, K_ENTITY, go, 0);
+                        AddSpawn(gn, nm, cat, K_ENTITY, go, 0,
+                            "生成对象：" + gn + "\n组件：" + comps + "\n分类：" + cat);
                         cats.Add(cat);
                         nEnt++;
                         if (dump != null) dump.Append(cat).Append(" | ").Append(gn).Append(" | ").Append(comps).Append("\r\n");
@@ -3052,7 +3452,8 @@ namespace CasualtiesGodMode
                         string comps2 = CollectComponents(go);
                         string cat2 = ClassifyPrefab(go, be2, SplitSet(comps2));
                         string nm2 = EntityDisplayName(go, be2);
-                        AddSpawn(gn, nm2, cat2, K_ENTITY, go, 0);
+                        AddSpawn(gn, nm2, cat2, K_ENTITY, go, 0,
+                            "生成对象：" + gn + "（运行时加载）\n组件：" + comps2 + "\n分类：" + cat2);
                         cats.Add(cat2);
                         nLive++;
                         if (dump != null) dump.Append(cat2).Append(" | ").Append(gn).Append(" | (运行时)").Append(comps2).Append("\r\n");
@@ -3077,7 +3478,14 @@ namespace CasualtiesGodMode
                             miss = 0;
                             string bn = string.IsNullOrEmpty(bi.name) ? ("未知方块" + id) : bi.name;
                             string bcat = BlockSub(bn);
-                            AddSpawn("block" + id, bn, bcat, K_BLOCK, null, id);
+                            string bdesc = "方块 id " + id + "\n分类：" + bcat;
+                            try
+                            {
+                                bdesc += "\n硬度：" + bi.health + "    金属：" + (bi.metallic ? "是" : "否")
+                                      + "    滑：" + (bi.slippery ? "是" : "否") + "    烫：" + (bi.hot ? "是" : "否");
+                            }
+                            catch { }
+                            AddSpawn("block" + id, bn, bcat, K_BLOCK, null, id, bdesc);
                             nBlk++;
                             if (dump != null) dump.Append(bcat).Append(" | block").Append(id).Append(" | ").Append(bn).Append("\r\n");
                         }
@@ -3102,6 +3510,8 @@ namespace CasualtiesGodMode
                             k = SpawnBlocks[j]; SpawnBlocks[j] = SpawnBlocks[j + 1]; SpawnBlocks[j + 1] = k;
                             GameObject g;
                             g = SpawnObjs[j]; SpawnObjs[j] = SpawnObjs[j + 1]; SpawnObjs[j + 1] = g;
+                            string d;
+                            d = SpawnDescs[j]; SpawnDescs[j] = SpawnDescs[j + 1]; SpawnDescs[j + 1] = d;
                         }
                     }
                 }
@@ -3313,6 +3723,11 @@ namespace CasualtiesGodMode
                 }
                 if (go == null) return false;
 
+                // v1.3.0：可见性修复。类人 NPC（幸存者/员工/守卫…）的 prefab 根节点上
+                // 没有 SpriteRenderer，身体是运行时按肢体拼的；如果拼装逻辑没跑，生成出来
+                // 就是「拖出来什么都没有」。这里把它自己和所有子物体里被关掉的渲染器打开。
+                EnsureVisible(go);
+
                 Item it = null;
                 try { it = go.GetComponent<Item>(); } catch { it = null; }
                 if (it != null)
@@ -3333,6 +3748,38 @@ namespace CasualtiesGodMode
                 if (SpawnFail < 3 && L != null) L.LogWarning("[GodMode][生成器] 生成 " + id + " 失败: " + e.Message);
                 return false;
             }
+        }
+
+        // v1.3.0：把生成出来的对象「弄显形」
+        internal static void EnsureVisible(GameObject go)
+        {
+            if (go == null) return;
+            try { if (!go.activeSelf) go.SetActive(true); } catch { }
+            try
+            {
+                SpriteRenderer[] rs = go.GetComponentsInChildren<SpriteRenderer>(true);
+                int n = 0;
+                if (rs != null)
+                {
+                    for (int i = 0; i < rs.Length; i++)
+                    {
+                        if (rs[i] == null) continue;
+                        if (!rs[i].enabled) { rs[i].enabled = true; n++; }
+                        try { if (rs[i].color.a <= 0.01f) rs[i].color = Color.white; } catch { }
+                    }
+                }
+                Renderer[] rr = go.GetComponentsInChildren<Renderer>(true);
+                if (rr != null)
+                {
+                    for (int i = 0; i < rr.Length; i++)
+                    {
+                        if (rr[i] == null) continue;
+                        if (!rr[i].enabled) rr[i].enabled = true;
+                    }
+                }
+                if (n > 0 && L != null) L.LogInfo("[GodMode][生成器] 可见性修复：打开 " + n + " 个渲染器（" + go.name + "）");
+            }
+            catch { }
         }
 
         // 放一个方块。世界数组带边界钳制（SetBlock 内部 Mathf.Clamp），所以传界外坐标也安全。
