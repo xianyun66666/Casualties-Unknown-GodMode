@@ -13,7 +13,7 @@ product:        Casualties Unknown — GodMode (BepInEx 5 插件)
 latest_version: 1.3.0
 artifact:       GodMode.dll
 artifact_size:  89600            # 字节，v1.3.0
-artifact_md5:   B28C9F1D648F6ABF383AB65A8A72DE0E
+artifact_md5:   93E601FEA8373A18FFCFDAAA4E921DAF
 game:           Casualties Unknown (官方版 / 早期 Demo 版都适用)
 loader:         BepInEx 5.4.23.5  (x64, Unity Mono)
 runtime:        .NET Framework 4.x / Unity 2022.3.62
@@ -99,7 +99,7 @@ if (Test-Path $dst) {
 Copy-Item '.\GodMode.dll' $dst -Force
 
 $h = Get-FileHash $dst -Algorithm MD5
-$h.Hash                                        # v1.3.0 应为 B28C9F1D648F6ABF383AB65A8A72DE0E
+$h.Hash                                        # v1.3.0 应为 93E601FEA8373A18FFCFDAAA4E921DAF
 (Get-Item $dst).Length                         # v1.3.0 应为 89600
 ```
 
